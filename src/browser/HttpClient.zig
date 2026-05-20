@@ -183,9 +183,13 @@ fn layerWith(self: anytype, next: Layer) Layer {
 }
 
 pub const NextTickNode = struct {
+    pub const Run =
+        *const fn (*Transfer, *anyopaque) anyerror!void;
+
     node: std.DoublyLinkedList.Node = .{},
     ctx: *anyopaque,
-    run: *const fn (*anyopaque) anyerror!void,
+    run: Run,
+    transfer_id: u32,
 };
 
 pub fn init(self: *Client, allocator: Allocator, network: *Network, cdp: ?*CDP) !void {
@@ -238,6 +242,14 @@ pub fn init(self: *Client, allocator: Allocator, network: *Network, cdp: ?*CDP) 
 
 pub fn deinit(self: *Client) void {
     self.abort();
+
+    // Drain Next Tick Queue
+    while (self.next_tick_queue.popFirst()) |node| {
+        const n: *NextTickNode = @fieldParentPtr("node", node);
+        self.allocator.destroy(n);
+    }
+    self.next_tick_count = 0;
+
     self.handles.deinit();
 
     self.clearUserAgentOverride();
@@ -426,14 +438,39 @@ pub fn tick(self: *Client, timeout_ms: u32, mode: DrainMode) !void {
     try self.drainInbox(mode);
 }
 
-pub fn runNextTick(self: *Client, node: *NextTickNode) void {
+pub fn runNextTick(self: *Client, transfer_id: u32, ctx: *anyopaque, run: NextTickNode.Run) !void {
+    const node = try self.allocator.create(NextTickNode);
+    node.* = .{ .ctx = ctx, .run = run, .transfer_id = transfer_id };
+
+    self.next_tick_count += 1;
     self.next_tick_queue.append(&node.node);
 }
 
+fn cancelNextTick(self: *Client, transfer_id: u32) void {
+    var it = self.next_tick_queue.first;
+    while (it) |node| {
+        it = node.next;
+        const n: *NextTickNode = @fieldParentPtr("node", node);
+        if (n.transfer_id == transfer_id) {
+            self.next_tick_queue.remove(node);
+            self.next_tick_count -= 1;
+            self.allocator.destroy(n);
+        }
+    }
+}
+
 fn drainNextTickQueue(self: *Client) !void {
-    while (self.next_tick_queue.popFirst()) |n| {
-        const next_tick: *NextTickNode = @fieldParentPtr("node", n);
-        try next_tick.run(next_tick.ctx);
+    var queue = self.next_tick_queue;
+    self.next_tick_queue = .{};
+
+    while (queue.popFirst()) |node| {
+        const n: *NextTickNode = @fieldParentPtr("node", node);
+        defer self.allocator.destroy(n);
+        defer self.next_tick_count -= 1;
+
+        if (self.findTransfer(n.transfer_id)) |t| {
+            try n.run(t, n.ctx);
+        }
     }
 }
 
@@ -1354,6 +1391,8 @@ pub const Transfer = struct {
         // Drop the id→*Transfer index entry before freeing the memory.
         // Any concurrent CDP lookup by id will now see this transfer as gone.
         _ = self.client.transfers.remove(self.id);
+
+        self.client.cancelNextTick(self.id);
 
         self.req.deinit();
         if (self.owner) |o| {

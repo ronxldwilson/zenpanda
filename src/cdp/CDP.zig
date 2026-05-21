@@ -71,7 +71,9 @@ target_auto_attach: bool = false,
 session_id_gen: SessionIdGen = .{},
 browser_context_id_gen: BrowserContextIdGen = .{},
 
-browser_context: ?BrowserContext,
+browser_contexts: std.StringHashMapUnmanaged(*BrowserContext),
+browser_context_pool: std.heap.MemoryPool(BrowserContext),
+session_to_context: std.StringHashMapUnmanaged(*BrowserContext),
 
 // Re-used arena for processing a message. We're assuming that we're getting
 // 1 message at a time.
@@ -91,7 +93,9 @@ pub fn init(
         .conn = undefined,
         .browser = undefined,
         .allocator = allocator,
-        .browser_context = null,
+        .browser_contexts = .empty,
+        .browser_context_pool = std.heap.MemoryPool(BrowserContext).init(allocator),
+        .session_to_context = .empty,
         .message_arena = std.heap.ArenaAllocator.init(allocator),
     };
 
@@ -110,9 +114,14 @@ pub fn init(
 }
 
 pub fn deinit(self: *CDP) void {
-    if (self.browser_context) |*bc| {
-        bc.deinit();
+    var it = self.browser_contexts.iterator();
+    while (it.next()) |entry| {
+        entry.value_ptr.*.deinit();
+        self.browser_context_pool.destroy(entry.value_ptr.*);
     }
+    self.browser_contexts.deinit(self.allocator);
+    self.browser_context_pool.deinit();
+    self.session_to_context.deinit(self.allocator);
     self.browser.deinit();
     self.message_arena.deinit();
     self.conn.deinit();
@@ -235,10 +244,15 @@ pub fn tick(self: *CDP) !bool {
 }
 
 fn pageWait(self: *CDP, ms: u32) !void {
-    const bc = &(self.browser_context orelse return error.NoPage);
-    const session = bc.session;
-    var runner = try session.runner(.{});
-    return runner.waitCDP(.{ .ms = ms });
+    var it = self.browser_contexts.iterator();
+    while (it.next()) |entry| {
+        const bc = entry.value_ptr.*;
+        if (bc.session.hasPage()) {
+            var runner = try bc.session.runner(.{});
+            return runner.waitCDP(.{ .ms = ms });
+        }
+    }
+    return error.NoPage;
 }
 
 // Parse-then-dispatch entry point. Used by:
@@ -261,6 +275,23 @@ pub fn dispatch(self: *CDP, arena: Allocator, sender: Command.Sender, str: []con
 // keeping `str` and the backing storage for `input`'s string slices
 // alive for the duration of the call.
 fn dispatchParsed(self: *CDP, arena: Allocator, sender: Command.Sender, str: []const u8, input: InputMessage) !void {
+    // Resolve the browser context from the sessionId
+    var resolved_bc: ?*BrowserContext = null;
+    var is_startup = false;
+    if (input.sessionId) |input_session_id| {
+        if (std.mem.eql(u8, input_session_id, "STARTUP")) {
+            is_startup = true;
+        } else if (self.session_to_context.get(input_session_id)) |bc| {
+            resolved_bc = bc;
+        } else {
+            var err_command = Command{
+                .input = .{ .json = str, .id = input.id, .action = "", .params = input.params, .session_id = input.sessionId },
+                .cdp = self, .arena = arena, .sender = sender, .browser_context = null,
+            };
+            return err_command.sendError(-32001, "Unknown sessionId", .{});
+        }
+    }
+
     var command = Command{
         .input = .{
             .json = str,
@@ -272,18 +303,8 @@ fn dispatchParsed(self: *CDP, arena: Allocator, sender: Command.Sender, str: []c
         .cdp = self,
         .arena = arena,
         .sender = sender,
-        .browser_context = if (self.browser_context) |*bc| bc else null,
+        .browser_context = resolved_bc,
     };
-
-    // See dispatchStartupCommand for more info on this.
-    var is_startup = false;
-    if (input.sessionId) |input_session_id| {
-        if (std.mem.eql(u8, input_session_id, "STARTUP")) {
-            is_startup = true;
-        } else if (self.isValidSessionId(input_session_id) == false) {
-            return command.sendError(-32001, "Unknown sessionId", .{});
-        }
-    }
 
     if (is_startup) {
         dispatchStartupCommand(&command, input.method) catch |err| {
@@ -385,31 +406,55 @@ fn dispatchCommand(command: *Command, method: []const u8) !void {
 }
 
 fn isValidSessionId(self: *const CDP, input_session_id: []const u8) bool {
-    const browser_context = &(self.browser_context orelse return false);
-    const session_id = browser_context.session_id orelse return false;
-    return std.mem.eql(u8, session_id, input_session_id);
+    return self.session_to_context.contains(input_session_id);
 }
 
-pub fn createBrowserContext(self: *CDP) ![]const u8 {
-    if (self.browser_context != null) {
-        return error.AlreadyExists;
-    }
+pub fn createBrowserContext(self: *CDP) !*BrowserContext {
     const id = self.browser_context_id_gen.next();
 
-    self.browser_context = @as(BrowserContext, undefined);
-    const browser_context = &self.browser_context.?;
+    const bc = try self.browser_context_pool.create();
+    errdefer self.browser_context_pool.destroy(bc);
 
-    try BrowserContext.init(browser_context, id, self);
-    return id;
+    try BrowserContext.init(bc, id, self);
+    errdefer bc.deinit();
+
+    try self.browser_contexts.put(self.allocator, id, bc);
+    return bc;
+}
+
+pub fn findBrowserContext(self: *CDP, id: []const u8) ?*BrowserContext {
+    return self.browser_contexts.get(id);
+}
+
+pub fn findContextByTargetId(self: *CDP, target_id: []const u8) ?*BrowserContext {
+    var it = self.browser_contexts.iterator();
+    while (it.next()) |entry| {
+        const bc = entry.value_ptr.*;
+        if (bc.target_id) |*tid| {
+            if (std.mem.eql(u8, tid, target_id)) {
+                return bc;
+            }
+        }
+    }
+    return null;
+}
+
+pub fn registerSessionId(self: *CDP, session_id: []const u8, bc: *BrowserContext) !void {
+    try self.session_to_context.put(self.allocator, session_id, bc);
+}
+
+pub fn unregisterSessionId(self: *CDP, session_id: []const u8) void {
+    _ = self.session_to_context.remove(session_id);
 }
 
 pub fn disposeBrowserContext(self: *CDP, browser_context_id: []const u8) bool {
-    const bc = &(self.browser_context orelse return false);
-    if (std.mem.eql(u8, bc.id, browser_context_id) == false) {
-        return false;
+    const bc = self.browser_contexts.get(browser_context_id) orelse return false;
+    if (bc.session_id) |sid| {
+        _ = self.session_to_context.remove(sid);
     }
     bc.deinit();
-    self.browser_context = null;
+    _ = self.browser_contexts.remove(browser_context_id);
+    self.browser_context_pool.destroy(bc);
     return true;
 }
 
@@ -1153,9 +1198,9 @@ pub const Command = struct {
     }
 
     pub fn createBrowserContext(self: *Command) !*BrowserContext {
-        _ = try self.cdp.createBrowserContext();
-        self.browser_context = &(self.cdp.browser_context.?);
-        return self.browser_context.?;
+        const bc = try self.cdp.createBrowserContext();
+        self.browser_context = bc;
+        return bc;
     }
 
     const SendResultOpts = struct {

@@ -224,6 +224,10 @@ pub fn tick(self: *CDP) !bool {
     // Server.configureSocket; the wakeup lets V8 run or terminate.
     const wait_ms: u32 = 1000; // 1s
 
+    // Serialize V8 access across connections sharing an isolate.
+    self.browser.app.v8_mutex.lock();
+    defer self.browser.app.v8_mutex.unlock();
+
     self.pageWait(wait_ms) catch |wait_err| switch (wait_err) {
         error.NoPage => {
             // No active page yet (or a teardown is in flight). Fall
@@ -637,7 +641,7 @@ pub const BrowserContext = struct {
 
     pub fn deinit(self: *BrowserContext) void {
         const browser = &self.cdp.browser;
-        const env = &browser.env;
+        const env = browser.env;
 
         // resetContextGroup detach the inspector from all contexts.
         // It appends async tasks, so we make sure we run the message loop

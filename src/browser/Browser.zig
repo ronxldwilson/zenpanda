@@ -36,11 +36,12 @@ const Notification = @import("../Notification.zig");
 // A browser supports multiple concurrent sessions.
 const Browser = @This();
 
-env: js.Env,
+env: *js.Env,
 app: *App,
 allocator: Allocator,
 arena_pool: *ArenaPool,
 http_client: HttpClient,
+owns_env: bool,
 
 // used by sessions to allocate pages.
 page_pool: std.heap.MemoryPool(Page),
@@ -56,8 +57,9 @@ active_sessions: std.ArrayList(*Session),
 // #2472).
 frame_id_gen: u32 = 0,
 
-const InitOpts = struct {
+pub const InitOpts = struct {
     env: js.Env.InitOpts = .{},
+    shared_env: bool = false,
 };
 
 // Allocate the next frame ID. Wrapping `+%` keeps this safe past 2^32
@@ -74,12 +76,22 @@ pub fn nextFrameId(self: *Browser) u32 {
 pub fn init(self: *Browser, app: *App, opts: InitOpts, cdp: ?*CDP) !void {
     const allocator = app.allocator;
 
-    var env = try js.Env.init(app, opts.env);
-    errdefer env.deinit();
+    var env_ptr: *js.Env = undefined;
+    var owns = false;
+    if (opts.shared_env) {
+        env_ptr = try app.getOrCreateSharedEnv();
+    } else {
+        const owned = try allocator.create(js.Env);
+        errdefer allocator.destroy(owned);
+        owned.* = try js.Env.init(app, opts.env);
+        env_ptr = owned;
+        owns = true;
+    }
 
     self.* = .{
         .app = app,
-        .env = env,
+        .env = env_ptr,
+        .owns_env = owns,
         .allocator = allocator,
         .arena_pool = &app.arena_pool,
         .http_client = undefined,
@@ -96,7 +108,10 @@ pub fn deinit(self: *Browser) void {
         self.session_pool.destroy(session);
     }
     self.active_sessions.deinit(self.allocator);
-    self.env.deinit();
+    if (self.owns_env) {
+        self.env.deinit();
+        self.allocator.destroy(self.env);
+    }
     self.page_pool.deinit();
     self.session_pool.deinit();
     self.http_client.deinit();
@@ -126,13 +141,11 @@ pub fn runMicrotasks(self: *Browser) void {
 }
 
 pub fn runMacrotasks(self: *Browser) !void {
-    const env = &self.env;
-
     try self.env.runMacrotasks();
-    env.pumpMessageLoop();
+    self.env.pumpMessageLoop();
 
     // either of the above could have queued more microtasks
-    env.runMicrotasks();
+    self.env.runMicrotasks();
 }
 
 pub fn hasBackgroundTasks(self: *Browser) bool {

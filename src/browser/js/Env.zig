@@ -63,7 +63,7 @@ platform: *const Platform,
 // the global isolate
 isolate: js.Isolate,
 
-contexts: [64]*Context,
+contexts: [256]*Context,
 context_count: usize,
 
 // just kept around because we need to free it on deinit

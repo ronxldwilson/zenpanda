@@ -22,6 +22,7 @@ const lp = @import("lightpanda");
 const Config = @import("Config.zig");
 const Snapshot = @import("browser/js/Snapshot.zig");
 const Platform = @import("browser/js/Platform.zig");
+const js = @import("browser/js/js.zig");
 const Telemetry = @import("telemetry/telemetry.zig").Telemetry;
 
 const Storage = @import("storage/Storage.zig");
@@ -42,6 +43,8 @@ telemetry: Telemetry,
 allocator: Allocator,
 arena_pool: ArenaPool,
 app_dir_path: ?[]const u8,
+v8_mutex: std.Thread.Mutex = .{},
+shared_env: ?js.Env = null,
 
 pub fn init(allocator: Allocator, config: *const Config) !*App {
     const platform = try Platform.init();
@@ -85,6 +88,12 @@ pub fn shutdown(self: *const App) bool {
     return self.network.shutdown.load(.acquire);
 }
 
+pub fn getOrCreateSharedEnv(self: *App) !*js.Env {
+    if (self.shared_env) |*env| return env;
+    self.shared_env = try js.Env.init(self, .{});
+    return &self.shared_env.?;
+}
+
 pub fn deinit(self: *App) void {
     const allocator = self.allocator;
     if (self.app_dir_path) |app_dir_path| {
@@ -93,6 +102,10 @@ pub fn deinit(self: *App) void {
     }
     self.telemetry.deinit(allocator);
     self.network.deinit();
+    if (self.shared_env) |*env| {
+        env.deinit();
+        self.shared_env = null;
+    }
     self.snapshot.deinit();
     self.platform.deinit();
     self.arena_pool.deinit();

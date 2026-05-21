@@ -24,7 +24,6 @@ const TaggedOpaque = @import("TaggedOpaque.zig");
 
 const Allocator = std.mem.Allocator;
 
-const CONTEXT_GROUP_ID = 1;
 const CLIENT_TRUST_LEVEL = 1;
 const IS_DEBUG = @import("builtin").mode == .Debug;
 
@@ -42,7 +41,9 @@ isolate: *v8.Isolate,
 handle: *v8.Inspector,
 client: *v8.InspectorClientImpl,
 default_context: ?v8.Global,
-session: ?Session,
+allocator: Allocator,
+sessions: std.ArrayList(*Session),
+next_context_group_id: i32 = 1,
 
 pub fn init(allocator: Allocator, isolate: *v8.Isolate) !*Inspector {
     const self = try allocator.create(Inspector);
@@ -50,7 +51,8 @@ pub fn init(allocator: Allocator, isolate: *v8.Isolate) !*Inspector {
 
     self.* = .{
         .unique_id = 1,
-        .session = null,
+        .allocator = allocator,
+        .sessions = std.ArrayList(*Session).init(allocator),
         .isolate = isolate,
         .client = undefined,
         .handle = undefined,
@@ -67,32 +69,44 @@ pub fn init(allocator: Allocator, isolate: *v8.Isolate) !*Inspector {
     return self;
 }
 
-pub fn deinit(self: *const Inspector, allocator: Allocator) void {
+pub fn deinit(self: *Inspector, alloc: Allocator) void {
     var hs: v8.HandleScope = undefined;
     v8.v8__HandleScope__CONSTRUCT(&hs, self.isolate);
     defer v8.v8__HandleScope__DESTRUCT(&hs);
 
-    if (self.session) |*s| {
+    for (self.sessions.items) |s| {
         s.deinit();
+        self.allocator.destroy(s);
     }
+    self.sessions.deinit();
     v8.v8_inspector__Client__IMPL__DELETE(self.client);
     v8.v8_inspector__Inspector__DELETE(self.handle);
-    allocator.destroy(self);
+    alloc.destroy(self);
 }
 
-pub fn startSession(self: *Inspector, ctx: anytype) *Session {
-    if (comptime IS_DEBUG) {
-        std.debug.assert(self.session == null);
+pub fn nextContextGroupId(self: *Inspector) i32 {
+    const id = self.next_context_group_id;
+    self.next_context_group_id += 1;
+    return id;
+}
+
+pub fn startSession(self: *Inspector, ctx: anytype) !*Session {
+    const session = try self.allocator.create(Session);
+    errdefer self.allocator.destroy(session);
+    Session.init(session, self, ctx);
+    try self.sessions.append(session);
+    return session;
+}
+
+pub fn stopSession(self: *Inspector, session: *Session) void {
+    for (self.sessions.items, 0..) |s, i| {
+        if (s == session) {
+            _ = self.sessions.swapRemove(i);
+            break;
+        }
     }
-
-    self.session = @as(Session, undefined);
-    Session.init(&self.session.?, self, ctx);
-    return &self.session.?;
-}
-
-pub fn stopSession(self: *Inspector) void {
-    self.session.?.deinit();
-    self.session = null;
+    session.deinit();
+    self.allocator.destroy(session);
 }
 
 // From CDP docs
@@ -110,6 +124,7 @@ pub fn contextCreated(
     origin: []const u8,
     aux_data: []const u8,
     is_default_context: bool,
+    context_group_id: i32,
 ) void {
     v8.v8_inspector__Inspector__ContextCreated(
         self.handle,
@@ -119,7 +134,7 @@ pub fn contextCreated(
         origin.len,
         aux_data.ptr,
         aux_data.len,
-        CONTEXT_GROUP_ID,
+        context_group_id,
         local.handle,
     );
 
@@ -142,12 +157,12 @@ pub fn contextDestroyed(self: *Inspector, context: *const v8.Context) void {
     }
 }
 
-pub fn resetContextGroup(self: *const Inspector) void {
+pub fn resetContextGroup(self: *const Inspector, context_group_id: i32) void {
     var hs: v8.HandleScope = undefined;
     v8.v8__HandleScope__CONSTRUCT(&hs, self.isolate);
     defer v8.v8__HandleScope__DESTRUCT(&hs);
 
-    v8.v8_inspector__Inspector__ResetContextGroup(self.handle, CONTEXT_GROUP_ID);
+    v8.v8_inspector__Inspector__ResetContextGroup(self.handle, context_group_id);
 }
 
 pub const RemoteObject = struct {
@@ -206,6 +221,7 @@ pub const Session = struct {
     inspector: *Inspector,
     handle: *v8.InspectorSession,
     channel: *v8.InspectorChannelImpl,
+    context_group_id: i32,
 
     // callbacks
     ctx: *anyopaque,
@@ -214,11 +230,12 @@ pub const Session = struct {
 
     fn init(self: *Session, inspector: *Inspector, ctx: anytype) void {
         const Container = @typeInfo(@TypeOf(ctx)).pointer.child;
+        const context_group_id = inspector.nextContextGroupId();
 
         const channel = v8.v8_inspector__Channel__IMPL__CREATE(inspector.isolate);
         const handle = v8.v8_inspector__Inspector__Connect(
             inspector.handle,
-            CONTEXT_GROUP_ID,
+            context_group_id,
             channel,
             CLIENT_TRUST_LEVEL,
         ).?;
@@ -229,6 +246,7 @@ pub const Session = struct {
             .handle = handle,
             .channel = channel,
             .inspector = inspector,
+            .context_group_id = context_group_id,
             .onResp = Container.onInspectorResponse,
             .onNotif = Container.onInspectorEvent,
         };

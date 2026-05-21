@@ -545,8 +545,8 @@ pub const BrowserContext = struct {
         }
 
         const browser = &cdp.browser;
-        const inspector_session = browser.env.inspector.?.startSession(self);
-        errdefer browser.env.inspector.?.stopSession();
+        const inspector_session = try browser.env.inspector.?.startSession(self);
+        errdefer browser.env.inspector.?.stopSession(inspector_session);
 
         var registry = Node.Registry.init(allocator);
         errdefer registry.deinit();
@@ -597,8 +597,8 @@ pub const BrowserContext = struct {
         // resetContextGroup detach the inspector from all contexts.
         // It appends async tasks, so we make sure we run the message loop
         // before deinit it.
-        env.inspector.?.resetContextGroup();
-        env.inspector.?.stopSession();
+        env.inspector.?.resetContextGroup(self.inspector_session.context_group_id);
+        env.inspector.?.stopSession(self.inspector_session);
 
         // abort all intercepted requests before closing the session/page
         // since some of these might callback into the page/scriptmanager.

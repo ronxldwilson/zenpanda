@@ -276,6 +276,7 @@ fn createIsolatedWorld(cmd: *CDP.Command) !void {
         frame.origin orelse "",
         aux_data,
         false,
+        bc.inspector_session.context_group_id,
     );
 
     const context_id = bc.inspector_session.inspector.getContextId(&ls.local);
@@ -508,7 +509,7 @@ pub fn frameNavigate(bc: *CDP.BrowserContext, event: *const Notification.FrameNa
 pub fn frameRemove(bc: *CDP.BrowserContext) void {
     // Clear all remote object mappings to prevent stale objectIds from being used
     // after the context is destroy
-    bc.inspector_session.inspector.resetContextGroup();
+    bc.inspector_session.inspector.resetContextGroup(bc.inspector_session.context_group_id);
 
     // The main frame is going to be removed, we need to remove contexts from other worlds first.
     for (bc.isolated_worlds.items) |isolated_world| {
@@ -672,6 +673,7 @@ pub fn frameNavigated(arena: Allocator, bc: *CDP.BrowserContext, event: *const N
             frame.origin orelse "",
             aux_data,
             is_root_frame,
+            bc.inspector_session.context_group_id,
         );
     }
     // Isolated worlds are session-wide (single V8 context shared across
@@ -695,6 +697,7 @@ pub fn frameNavigated(arena: Allocator, bc: *CDP.BrowserContext, event: *const N
                 "://",
                 aux_json,
                 false,
+                bc.inspector_session.context_group_id,
             );
         }
     }

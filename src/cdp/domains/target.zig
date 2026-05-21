@@ -195,6 +195,7 @@ fn createTarget(cmd: *CDP.Command) !void {
             // try frame.origin(arena),
             aux_data,
             true,
+            bc.inspector_session.context_group_id,
         );
     }
 

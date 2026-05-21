@@ -52,7 +52,7 @@ pub fn init(allocator: Allocator, isolate: *v8.Isolate) !*Inspector {
     self.* = .{
         .unique_id = 1,
         .allocator = allocator,
-        .sessions = std.ArrayList(*Session).init(allocator),
+        .sessions = .empty,
         .isolate = isolate,
         .client = undefined,
         .handle = undefined,
@@ -78,7 +78,7 @@ pub fn deinit(self: *Inspector, alloc: Allocator) void {
         s.deinit();
         self.allocator.destroy(s);
     }
-    self.sessions.deinit();
+    self.sessions.deinit(self.allocator);
     v8.v8_inspector__Client__IMPL__DELETE(self.client);
     v8.v8_inspector__Inspector__DELETE(self.handle);
     alloc.destroy(self);
@@ -94,7 +94,7 @@ pub fn startSession(self: *Inspector, ctx: anytype) !*Session {
     const session = try self.allocator.create(Session);
     errdefer self.allocator.destroy(session);
     Session.init(session, self, ctx);
-    try self.sessions.append(session);
+    try self.sessions.append(self.allocator, session);
     return session;
 }
 

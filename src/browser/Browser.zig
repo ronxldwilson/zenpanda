@@ -85,7 +85,7 @@ pub fn init(self: *Browser, app: *App, opts: InitOpts, cdp: ?*CDP) !void {
         .http_client = undefined,
         .page_pool = std.heap.MemoryPool(Page).init(allocator),
         .session_pool = std.heap.MemoryPool(Session).init(allocator),
-        .active_sessions = std.ArrayList(*Session).init(allocator),
+        .active_sessions = .empty,
     };
     try self.http_client.init(allocator, &app.network, cdp);
 }
@@ -95,7 +95,7 @@ pub fn deinit(self: *Browser) void {
         session.deinit();
         self.session_pool.destroy(session);
     }
-    self.active_sessions.deinit();
+    self.active_sessions.deinit(self.allocator);
     self.env.deinit();
     self.page_pool.deinit();
     self.session_pool.deinit();
@@ -106,7 +106,7 @@ pub fn newSession(self: *Browser, notification: *Notification) !*Session {
     const session = try self.session_pool.create();
     errdefer self.session_pool.destroy(session);
     try Session.init(session, self, notification);
-    try self.active_sessions.append(session);
+    try self.active_sessions.append(self.allocator, session);
     return session;
 }
 

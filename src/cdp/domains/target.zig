@@ -64,36 +64,42 @@ pub fn processMessage(cmd: *CDP.Command) !void {
 }
 
 fn getTargets(cmd: *CDP.Command) !void {
-    var infos: std.BoundedArray(TargetInfo, 64) = .{};
+    var infos_buf: [64]TargetInfo = undefined;
+    var count: usize = 0;
     var it = cmd.cdp.browser_contexts.iterator();
     while (it.next()) |entry| {
         const bc = entry.value_ptr.*;
         if (bc.target_id) |*tid| {
-            infos.append(.{
+            if (count >= infos_buf.len) break;
+            infos_buf[count] = .{
                 .targetId = tid,
                 .type = "page",
                 .title = bc.getTitle() orelse "",
                 .url = bc.getURL() orelse "about:blank",
                 .attached = bc.session_id != null,
                 .canAccessOpener = false,
-            }) catch break;
+            };
+            count += 1;
         }
     }
 
     return cmd.sendResult(.{
-        .targetInfos = infos.constSlice(),
+        .targetInfos = infos_buf[0..count],
     }, .{ .include_session_id = false });
 }
 
 fn getBrowserContexts(cmd: *CDP.Command) !void {
-    var ids: std.BoundedArray([]const u8, 64) = .{};
+    var ids_buf: [64][]const u8 = undefined;
+    var count: usize = 0;
     var it = cmd.cdp.browser_contexts.iterator();
     while (it.next()) |entry| {
-        ids.append(entry.value_ptr.*.id) catch break;
+        if (count >= ids_buf.len) break;
+        ids_buf[count] = entry.value_ptr.*.id;
+        count += 1;
     }
 
     return cmd.sendResult(.{
-        .browserContextIds = ids.constSlice(),
+        .browserContextIds = ids_buf[0..count],
     }, .{ .include_session_id = false });
 }
 

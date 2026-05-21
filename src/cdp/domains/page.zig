@@ -530,11 +530,11 @@ pub fn frameCreated(bc: *CDP.BrowserContext, frame: *Frame) !void {
     // created BEFORE clearing pending_page (deliberate ordering — see
     // Session.commitPendingPage). The captured_response for the request we
     // just committed was inserted by onHttpResponseHeadersDone moments ago
-    // and lives in cdp.frame_arena; resetting either would lose it.
+    // and lives in the BrowserContext's frame_arena; resetting it would lose it.
     const in_commit = bc.session.pendingPage() != null;
 
     if (!in_commit) {
-        _ = bc.cdp.frame_arena.reset(.{ .retain_with_limit = 1024 * 512 });
+        _ = bc._frame_arena.reset(.{ .retain_with_limit = 1024 * 512 });
     }
 
     for (bc.isolated_worlds.items) |isolated_world| {

@@ -77,16 +77,6 @@ browser_context: ?BrowserContext,
 // 1 message at a time.
 message_arena: std.heap.ArenaAllocator,
 
-// Used for processing notifications within a browser context.
-notification_arena: std.heap.ArenaAllocator,
-
-// Valid for 1 frame navigation (what CDP calls a "renderer")
-frame_arena: std.heap.ArenaAllocator,
-
-// Valid for the entire lifetime of the BrowserContext. Should minimize
-// (or altogether eliminate) our use of this.
-browser_context_arena: std.heap.ArenaAllocator,
-
 pub fn init(
     self: *CDP,
     app: *App,
@@ -102,10 +92,7 @@ pub fn init(
         .browser = undefined,
         .allocator = allocator,
         .browser_context = null,
-        .frame_arena = std.heap.ArenaAllocator.init(allocator),
         .message_arena = std.heap.ArenaAllocator.init(allocator),
-        .notification_arena = std.heap.ArenaAllocator.init(allocator),
-        .browser_context_arena = std.heap.ArenaAllocator.init(allocator),
     };
 
     try self.browser.init(app, .{ .env = .{ .with_inspector = true } }, self);
@@ -127,10 +114,7 @@ pub fn deinit(self: *CDP) void {
         bc.deinit();
     }
     self.browser.deinit();
-    self.frame_arena.deinit();
     self.message_arena.deinit();
-    self.notification_arena.deinit();
-    self.browser_context_arena.deinit();
     self.conn.deinit();
 }
 // Called by Network when readable bytes arrive on the CDP socket.
@@ -426,7 +410,6 @@ pub fn disposeBrowserContext(self: *CDP, browser_context_id: []const u8) bool {
     bc.deinit();
     self.browser.closeSession();
     self.browser_context = null;
-    _ = self.browser_context_arena.reset(.{ .retain_with_limit = 1024 * 16 });
     return true;
 }
 
@@ -482,6 +465,12 @@ pub const BrowserContext = struct {
     // message_arena). But notifications happen outside of the typical CDP
     // request->response, and thus don't have a cmd and don't have an arena.
     notification_arena: Allocator,
+
+    // Owned arena allocators — each BrowserContext manages its own arenas
+    // so multiple contexts can coexist on one CDP connection.
+    _frame_arena: std.heap.ArenaAllocator,
+    _notification_arena: std.heap.ArenaAllocator,
+    _browser_context_arena: std.heap.ArenaAllocator,
 
     // Maps to our Page. (There are other types of targets, but we only
     // deal with "pages" for now). Since we only allow 1 open page at a
@@ -575,13 +564,19 @@ pub const BrowserContext = struct {
             .node_search_list = undefined,
             .isolated_worlds = .empty,
             .inspector_session = inspector_session,
-            .frame_arena = cdp.frame_arena.allocator(),
-            .arena = cdp.browser_context_arena.allocator(),
-            .notification_arena = cdp.notification_arena.allocator(),
+            ._frame_arena = std.heap.ArenaAllocator.init(allocator),
+            ._notification_arena = std.heap.ArenaAllocator.init(allocator),
+            ._browser_context_arena = std.heap.ArenaAllocator.init(allocator),
+            .frame_arena = undefined,
+            .arena = undefined,
+            .notification_arena = undefined,
             .intercept_state = try InterceptState.init(allocator),
             .captured_responses = .empty,
             .notification = notification,
         };
+        self.frame_arena = self._frame_arena.allocator();
+        self.arena = self._browser_context_arena.allocator();
+        self.notification_arena = self._notification_arena.allocator();
         self.node_search_list = Node.Search.List.init(allocator, &self.node_registry);
         errdefer self.deinit();
 
@@ -660,6 +655,10 @@ pub const BrowserContext = struct {
             browser.http_client.clearUserAgentOverride();
         }
         self.intercept_state.deinit();
+
+        self._frame_arena.deinit();
+        self._notification_arena.deinit();
+        self._browser_context_arena.deinit();
     }
 
     pub fn reset(self: *BrowserContext) void {
@@ -961,7 +960,7 @@ pub const BrowserContext = struct {
     }
 
     fn resetNotificationArena(self: *BrowserContext) void {
-        defer _ = self.cdp.notification_arena.reset(.{ .retain_with_limit = 1024 * 64 });
+        defer _ = self._notification_arena.reset(.{ .retain_with_limit = 1024 * 64 });
     }
 
     pub fn callInspector(self: *const BrowserContext, msg: []const u8) void {

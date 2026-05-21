@@ -64,41 +64,36 @@ pub fn processMessage(cmd: *CDP.Command) !void {
 }
 
 fn getTargets(cmd: *CDP.Command) !void {
-    // If no context available, return an empty array.
-    const bc = cmd.browser_context orelse {
-        return cmd.sendResult(.{
-            .targetInfos = [_]TargetInfo{},
-        }, .{ .include_session_id = false });
-    };
-
-    const target_id = &(bc.target_id orelse {
-        return cmd.sendResult(.{
-            .targetInfos = [_]TargetInfo{},
-        }, .{ .include_session_id = false });
-    });
+    var infos: std.BoundedArray(TargetInfo, 64) = .{};
+    var it = cmd.cdp.browser_contexts.iterator();
+    while (it.next()) |entry| {
+        const bc = entry.value_ptr.*;
+        if (bc.target_id) |*tid| {
+            infos.append(.{
+                .targetId = tid,
+                .type = "page",
+                .title = bc.getTitle() orelse "",
+                .url = bc.getURL() orelse "about:blank",
+                .attached = bc.session_id != null,
+                .canAccessOpener = false,
+            }) catch break;
+        }
+    }
 
     return cmd.sendResult(.{
-        .targetInfos = [_]TargetInfo{.{
-            .targetId = target_id,
-            .type = "page",
-            .title = bc.getTitle() orelse "",
-            .url = bc.getURL() orelse "about:blank",
-            .attached = true,
-            .canAccessOpener = false,
-        }},
+        .targetInfos = infos.constSlice(),
     }, .{ .include_session_id = false });
 }
 
 fn getBrowserContexts(cmd: *CDP.Command) !void {
-    var browser_context_ids: []const []const u8 = undefined;
-    if (cmd.browser_context) |bc| {
-        browser_context_ids = &.{bc.id};
-    } else {
-        browser_context_ids = &.{};
+    var ids: std.BoundedArray([]const u8, 64) = .{};
+    var it = cmd.cdp.browser_contexts.iterator();
+    while (it.next()) |entry| {
+        ids.append(entry.value_ptr.*.id) catch break;
     }
 
     return cmd.sendResult(.{
-        .browserContextIds = browser_context_ids,
+        .browserContextIds = ids.constSlice(),
     }, .{ .include_session_id = false });
 }
 
@@ -115,10 +110,7 @@ fn createBrowserContext(cmd: *CDP.Command) !void {
         }
     }
 
-    const bc = cmd.createBrowserContext() catch |err| switch (err) {
-        error.AlreadyExists => return cmd.sendError(-32000, "Cannot have more than one browser context at a time", .{}),
-        else => return err,
-    };
+    const bc = try cmd.createBrowserContext();
 
     if (params) |p| {
         if (p.proxyServer) |proxy| {
@@ -156,18 +148,19 @@ fn createTarget(cmd: *CDP.Command) !void {
         // forTab: ?bool = null,
     })) orelse return error.InvalidParams;
 
-    const bc = cmd.browser_context orelse cmd.createBrowserContext() catch |err| switch (err) {
-        error.AlreadyExists => unreachable,
-        else => return err,
+    const bc = blk: {
+        if (params.browserContextId) |param_browser_context_id| {
+            const found = cmd.cdp.findBrowserContext(param_browser_context_id) orelse
+                return error.UnknownBrowserContextId;
+            cmd.browser_context = found;
+            break :blk found;
+        }
+        if (cmd.browser_context) |existing| break :blk existing;
+        break :blk try cmd.createBrowserContext();
     };
 
     if (bc.target_id != null) {
         return error.TargetAlreadyLoaded;
-    }
-    if (params.browserContextId) |param_browser_context_id| {
-        if (std.mem.eql(u8, param_browser_context_id, bc.id) == false) {
-            return error.UnknownBrowserContextId;
-        }
     }
 
     // if target_id is null, we should never have a blank frame
@@ -240,35 +233,36 @@ fn attachToTarget(cmd: *CDP.Command) !void {
         flatten: bool = true,
     })) orelse return error.InvalidParams;
 
-    const bc = cmd.browser_context orelse return error.BrowserContextNotLoaded;
-    const target_id = &(bc.target_id orelse return error.TargetNotLoaded);
-    if (std.mem.eql(u8, target_id, params.targetId) == false) {
+    const bc = cmd.cdp.findContextByTargetId(params.targetId) orelse
         return error.UnknownTargetId;
-    }
+    const target_id = &bc.target_id.?;
 
+    cmd.browser_context = bc;
     try doAttachtoTarget(cmd, target_id);
 
     return cmd.sendResult(.{ .sessionId = bc.session_id }, .{});
 }
 
 fn attachToBrowserTarget(cmd: *CDP.Command) !void {
-    const bc = cmd.browser_context orelse return error.BrowserContextNotLoaded;
+    // Pick the first browser context, or error if none exist
+    var it = cmd.cdp.browser_contexts.iterator();
+    const bc = if (it.next()) |entry| entry.value_ptr.* else return error.BrowserContextNotLoaded;
 
     const session_id = bc.session_id orelse cmd.cdp.session_id_gen.next();
 
     try cmd.sendEvent("Target.attachedToTarget", AttachToTarget{
         .sessionId = session_id,
         .targetInfo = TargetInfo{
-            .targetId = bc.id, // We use the browser context is as browser's target id.
+            .targetId = bc.id,
             .title = "",
             .url = "",
             .type = "browser",
-            // Chrome doesn't send a browserContextId in this case.
             .browserContextId = null,
         },
     }, .{});
 
     bc.session_id = session_id;
+    try cmd.cdp.registerSessionId(session_id, bc);
 
     return cmd.sendResult(.{ .sessionId = bc.session_id }, .{});
 }
@@ -278,11 +272,9 @@ fn closeTarget(cmd: *CDP.Command) !void {
         targetId: []const u8,
     })) orelse return error.InvalidParams;
 
-    const bc = cmd.browser_context orelse return error.BrowserContextNotLoaded;
-    const target_id = &(bc.target_id orelse return error.TargetNotLoaded);
-    if (std.mem.eql(u8, target_id, params.targetId) == false) {
+    const bc = cmd.cdp.findContextByTargetId(params.targetId) orelse
         return error.UnknownTargetId;
-    }
+    const target_id = &(bc.target_id orelse return error.TargetNotLoaded);
 
     // can't be null if we have a target_id
     lp.assert(bc.session.hasPage(), "CDP.target.closeTarget null frame", .{});
@@ -303,6 +295,7 @@ fn closeTarget(cmd: *CDP.Command) !void {
             .reason = "Render process gone.",
         }, .{});
 
+        cmd.cdp.unregisterSessionId(session_id);
         bc.session_id = null;
     }
 
@@ -321,11 +314,9 @@ fn getTargetInfo(cmd: *CDP.Command) !void {
     const params = (try cmd.params(Params)) orelse Params{};
 
     if (params.targetId) |param_target_id| {
-        const bc = cmd.browser_context orelse return error.BrowserContextNotLoaded;
-        const target_id = &(bc.target_id orelse return error.TargetNotLoaded);
-        if (std.mem.eql(u8, target_id, param_target_id) == false) {
+        const bc = cmd.cdp.findContextByTargetId(param_target_id) orelse
             return error.UnknownTargetId;
-        }
+        const target_id = &bc.target_id.?;
 
         return cmd.sendResult(.{
             .targetInfo = TargetInfo{
@@ -333,7 +324,7 @@ fn getTargetInfo(cmd: *CDP.Command) !void {
                 .type = "page",
                 .title = bc.getTitle() orelse "",
                 .url = bc.getURL() orelse "about:blank",
-                .attached = true,
+                .attached = bc.session_id != null,
                 .canAccessOpener = false,
             },
         }, .{ .include_session_id = false });
@@ -357,16 +348,10 @@ fn sendMessageToTarget(cmd: *CDP.Command) !void {
         sessionId: []const u8,
     })) orelse return error.InvalidParams;
 
-    const bc = cmd.browser_context orelse return error.BrowserContextNotLoaded;
+    const bc = cmd.cdp.session_to_context.get(params.sessionId) orelse
+        return error.UnknownSessionId;
     if (bc.target_id == null) {
         return error.TargetNotLoaded;
-    }
-
-    lp.assert(bc.session_id != null, "CDP.target.sendMessageToTarget null session_id", .{});
-    if (std.mem.eql(u8, bc.session_id.?, params.sessionId) == false) {
-        // Is this right? Is the params.sessionId meant to be the active
-        // sessionId? What else could it be? We have no other session_id.
-        return error.UnknownSessionId;
     }
 
     var aw = std.Io.Writer.Allocating.init(cmd.arena);
@@ -382,13 +367,31 @@ fn sendMessageToTarget(cmd: *CDP.Command) !void {
 }
 
 fn detachFromTarget(cmd: *CDP.Command) !void {
-    if (cmd.browser_context) |bc| {
-        if (bc.session_id) |session_id| {
+    const Params = struct {
+        targetId: ?[]const u8 = null,
+        sessionId: ?[]const u8 = null,
+    };
+    const params = (try cmd.params(Params)) orelse Params{};
+
+    const bc = blk: {
+        if (cmd.browser_context) |existing| break :blk existing;
+        if (params.sessionId) |sid| {
+            if (cmd.cdp.session_to_context.get(sid)) |found| break :blk found;
+        }
+        if (params.targetId) |tid| {
+            if (cmd.cdp.findContextByTargetId(tid)) |found| break :blk found;
+        }
+        break :blk @as(?*CDP.BrowserContext, null);
+    };
+
+    if (bc) |context| {
+        if (context.session_id) |session_id| {
             try cmd.sendEvent("Target.detachedFromTarget", .{
                 .sessionId = session_id,
             }, .{});
+            cmd.cdp.unregisterSessionId(session_id);
         }
-        bc.session_id = null;
+        context.session_id = null;
     }
 
     return cmd.sendResult(null, .{});
@@ -412,11 +415,14 @@ fn setAutoAttach(cmd: *CDP.Command) !void {
 
     if (cmd.cdp.target_auto_attach == false) {
         // detach from all currently attached targets.
-        if (cmd.browser_context) |bc| {
+        var detach_it = cmd.cdp.browser_contexts.iterator();
+        while (detach_it.next()) |entry| {
+            const bc = entry.value_ptr.*;
             if (bc.session_id) |session_id| {
                 try cmd.sendEvent("Target.detachedFromTarget", .{
                     .sessionId = session_id,
                 }, .{});
+                cmd.cdp.unregisterSessionId(session_id);
             }
             bc.session_id = null;
         }
@@ -425,14 +431,20 @@ fn setAutoAttach(cmd: *CDP.Command) !void {
     }
 
     // autoAttach is set to true, we must attach to all existing targets.
-    if (cmd.browser_context) |bc| {
+    var attach_it = cmd.cdp.browser_contexts.iterator();
+    var attached_any = false;
+    while (attach_it.next()) |entry| {
+        const bc = entry.value_ptr.*;
         if (bc.target_id == null) {
             if (bc.session.currentFrame()) |frame| {
-                // the target_id == the frame_id of the "root" frame
                 bc.target_id = id.toFrameId(frame._frame_id);
+                cmd.browser_context = bc;
                 try doAttachtoTarget(cmd, &bc.target_id.?);
             }
         }
+        attached_any = true;
+    }
+    if (attached_any) {
         try cmd.sendResult(null, .{});
         return;
     }
@@ -464,8 +476,6 @@ fn doAttachtoTarget(cmd: *CDP.Command, target_id: []const u8) !void {
     const session_id = bc.session_id orelse cmd.cdp.session_id_gen.next();
 
     if (bc.session_id == null) {
-        // extra_headers should not be kept on a new frame or tab,
-        // currently we have only 1 frame, we clear it just in case
         bc.extra_headers.clearRetainingCapacity();
     }
 
@@ -480,6 +490,7 @@ fn doAttachtoTarget(cmd: *CDP.Command, target_id: []const u8) !void {
     }, .{ .session_id = bc.session_id });
 
     bc.session_id = session_id;
+    try cmd.cdp.registerSessionId(session_id, bc);
 }
 
 const AttachToTarget = struct {
@@ -529,15 +540,16 @@ test "cdp.target: createBrowserContext" {
 
     {
         try ctx.processMessage(.{ .id = 4, .method = "Target.createBrowserContext" });
+        const bc = ctx.firstBrowserContext().?;
         try ctx.expectSentResult(.{
-            .browserContextId = ctx.cdp().browser_context.?.id,
+            .browserContextId = bc.id,
         }, .{ .id = 4, .session_id = null });
     }
 
     {
-        // we already have one now
+        // multiple contexts are now allowed
         try ctx.processMessage(.{ .id = 5, .method = "Target.createBrowserContext" });
-        try ctx.expectSentError(-32000, "Cannot have more than one browser context at a time", .{ .id = 5 });
+        try testing.expectEqual(@as(usize, 2), ctx.cdp().browser_contexts.count());
     }
 }
 
@@ -567,7 +579,7 @@ test "cdp.target: disposeBrowserContext" {
             .params = .{ .browserContextId = "BID-20" },
         });
         try ctx.expectSentResult(null, .{ .id = 9 });
-        try testing.expectEqual(null, ctx.cdp().browser_context);
+        try testing.expectEqual(null, ctx.cdp().findBrowserContext("BID-20"));
     }
 }
 
@@ -588,8 +600,9 @@ test "cdp.target: createTarget assigns unique IDs across BrowserContexts (issue 
         .method = "Target.createTarget",
         .params = .{ .url = "about:blank" },
     });
-    const target_id_1 = ctx.cdp().browser_context.?.target_id.?;
-    const bc_id_1 = ctx.cdp().browser_context.?.id;
+    const bc1 = ctx.firstBrowserContext().?;
+    const target_id_1 = bc1.target_id.?;
+    const bc_id_1 = bc1.id;
 
     // Dispose the first context.
     try ctx.processMessage(.{
@@ -597,7 +610,7 @@ test "cdp.target: createTarget assigns unique IDs across BrowserContexts (issue 
         .method = "Target.disposeBrowserContext",
         .params = .{ .browserContextId = bc_id_1 },
     });
-    try testing.expectEqual(null, ctx.cdp().browser_context);
+    try testing.expectEqual(@as(usize, 0), ctx.cdp().browser_contexts.count());
 
     // Cycle 2: create another context + target. The new target_id must
     // differ from cycle 1's -- duplicates here are exactly what Playwright
@@ -607,7 +620,8 @@ test "cdp.target: createTarget assigns unique IDs across BrowserContexts (issue 
         .method = "Target.createTarget",
         .params = .{ .url = "about:blank" },
     });
-    const target_id_2 = ctx.cdp().browser_context.?.target_id.?;
+    const bc2 = ctx.firstBrowserContext().?;
+    const target_id_2 = bc2.target_id.?;
 
     try testing.expect(!std.mem.eql(u8, &target_id_1, &target_id_2));
 }
@@ -619,7 +633,7 @@ test "cdp.target: createTarget" {
         try ctx.processMessage(.{ .id = 10, .method = "Target.createTarget", .params = .{ .url = "about:blank" } });
 
         // should create a browser context
-        const bc = ctx.cdp().browser_context.?;
+        const bc = ctx.firstBrowserContext().?;
         try ctx.expectSentEvent("Target.targetCreated", .{ .targetInfo = .{ .url = "about:blank", .title = "", .attached = false, .type = "page", .canAccessOpener = false, .browserContextId = bc.id, .targetId = bc.target_id.? } }, .{});
     }
 
@@ -631,7 +645,7 @@ test "cdp.target: createTarget" {
         try ctx.processMessage(.{ .id = 10, .method = "Target.createTarget", .params = .{ .url = "about:blank" } });
 
         // should create a browser context
-        const bc = ctx.cdp().browser_context.?;
+        const bc = ctx.firstBrowserContext().?;
         try ctx.expectSentEvent("Target.targetCreated", .{ .targetInfo = .{ .url = "about:blank", .title = "", .attached = false, .type = "page", .canAccessOpener = false, .browserContextId = bc.id, .targetId = bc.target_id.? } }, .{});
         try ctx.expectSentEvent("Target.attachedToTarget", .{ .sessionId = bc.session_id.?, .targetInfo = .{ .url = "about:blank", .title = "", .attached = true, .type = "page", .canAccessOpener = false, .browserContextId = bc.id, .targetId = bc.target_id.? } }, .{});
     }
@@ -657,14 +671,16 @@ test "cdp.target: closeTarget" {
     defer ctx.deinit();
 
     {
+        // no contexts at all — target not found
         try ctx.processMessage(.{ .id = 10, .method = "Target.closeTarget", .params = .{ .targetId = "X" } });
-        try ctx.expectSentError(-31998, "BrowserContextNotLoaded", .{ .id = 10 });
+        try ctx.expectSentError(-31998, "UnknownTargetId", .{ .id = 10 });
     }
 
     const bc = try ctx.loadBrowserContext(.{ .id = "BID-9" });
     {
+        // context exists but has no target — target not found
         try ctx.processMessage(.{ .id = 10, .method = "Target.closeTarget", .params = .{ .targetId = "TID-8" } });
-        try ctx.expectSentError(-31998, "TargetNotLoaded", .{ .id = 10 });
+        try ctx.expectSentError(-31998, "UnknownTargetId", .{ .id = 10 });
     }
 
     // pretend we createdTarget first
@@ -689,13 +705,13 @@ test "cdp.target: attachToTarget" {
 
     {
         try ctx.processMessage(.{ .id = 10, .method = "Target.attachToTarget", .params = .{ .targetId = "X" } });
-        try ctx.expectSentError(-31998, "BrowserContextNotLoaded", .{ .id = 10 });
+        try ctx.expectSentError(-31998, "UnknownTargetId", .{ .id = 10 });
     }
 
     const bc = try ctx.loadBrowserContext(.{ .id = "BID-9" });
     {
         try ctx.processMessage(.{ .id = 10, .method = "Target.attachToTarget", .params = .{ .targetId = "TID-8" } });
-        try ctx.expectSentError(-31998, "TargetNotLoaded", .{ .id = 10 });
+        try ctx.expectSentError(-31998, "UnknownTargetId", .{ .id = 10 });
     }
 
     // pretend we createdTarget first
@@ -733,13 +749,13 @@ test "cdp.target: getTargetInfo" {
 
     {
         try ctx.processMessage(.{ .id = 10, .method = "Target.getTargetInfo", .params = .{ .targetId = "X" } });
-        try ctx.expectSentError(-31998, "BrowserContextNotLoaded", .{ .id = 10 });
+        try ctx.expectSentError(-31998, "UnknownTargetId", .{ .id = 10 });
     }
 
     const bc = try ctx.loadBrowserContext(.{ .id = "BID-9" });
     {
         try ctx.processMessage(.{ .id = 10, .method = "Target.getTargetInfo", .params = .{ .targetId = "TID-8" } });
-        try ctx.expectSentError(-31998, "TargetNotLoaded", .{ .id = 10 });
+        try ctx.expectSentError(-31998, "UnknownTargetId", .{ .id = 10 });
     }
 
     // pretend we createdTarget first
@@ -758,7 +774,7 @@ test "cdp.target: getTargetInfo" {
                 .type = "page",
                 .title = "",
                 .url = "about:blank",
-                .attached = true,
+                .attached = false,
                 .canAccessOpener = false,
             },
         }, .{ .id = 11 });

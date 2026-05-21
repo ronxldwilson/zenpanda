@@ -552,7 +552,7 @@ test "cdp.network setExtraHTTPHeaders" {
         .params = .{ .headers = .{ .food = "bars" } },
     });
 
-    const bc = ctx.cdp().browser_context.?;
+    const bc = ctx.firstBrowserContext().?;
     try testing.expectEqual(bc.extra_headers.items.len, 1);
 }
 

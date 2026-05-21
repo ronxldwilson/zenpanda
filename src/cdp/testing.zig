@@ -59,6 +59,12 @@ const TestContext = struct {
         return &self.cdp_;
     }
 
+    pub fn firstBrowserContext(self: *TestContext) ?*CDP.BrowserContext {
+        var it = self.cdp().browser_contexts.iterator();
+        if (it.next()) |entry| return entry.value_ptr.*;
+        return null;
+    }
+
     const BrowserContextOpts = struct {
         id: ?[]const u8 = null,
         target_id: ?[14]u8 = null,
@@ -67,15 +73,13 @@ const TestContext = struct {
     };
     pub fn loadBrowserContext(self: *TestContext, opts: BrowserContextOpts) !*CDP.BrowserContext {
         var c = self.cdp();
-        if (c.browser_context) |bc| {
-            _ = c.disposeBrowserContext(bc.id);
-        }
 
-        _ = try c.createBrowserContext();
-        var bc = &c.browser_context.?;
+        const bc = try c.createBrowserContext();
 
-        if (opts.id) |id| {
-            bc.id = id;
+        if (opts.id) |new_id| {
+            _ = c.browser_contexts.remove(bc.id);
+            bc.id = new_id;
+            try c.browser_contexts.put(c.allocator, new_id, bc);
         }
 
         if (opts.target_id) |tid| {
@@ -84,11 +88,13 @@ const TestContext = struct {
 
         if (opts.session_id) |sid| {
             bc.session_id = sid;
+            try c.registerSessionId(sid, bc);
         }
 
         if (opts.url) |url| {
             if (bc.session_id == null) {
                 bc.session_id = "SID-X";
+                try c.registerSessionId("SID-X", bc);
             }
             if (bc.target_id == null) {
                 bc.target_id = "TID-000000000Z".*;
@@ -202,10 +208,14 @@ const TestContext = struct {
                 return;
             }
 
-            if (self.cdp_.browser_context) |*bc| {
-                if (bc.session.hasPage()) {
-                    var runner = try bc.session.runner(.{});
-                    _ = try runner.tick(.{ .ms = 1000 });
+            {
+                var bc_it = self.cdp_.browser_contexts.iterator();
+                while (bc_it.next()) |entry| {
+                    const bc = entry.value_ptr.*;
+                    if (bc.session.hasPage()) {
+                        var runner = try bc.session.runner(.{});
+                        _ = try runner.tick(.{ .ms = 1000 });
+                    }
                 }
             }
             std.Thread.sleep(5 * std.time.ns_per_ms);

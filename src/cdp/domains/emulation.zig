@@ -136,7 +136,7 @@ test "cdp.Emulation: setUserAgentOverride ignores mozilla" {
     });
 
     try ctx.expectSentResult(null, .{});
-    try testing.expectEqual(false, ctx.cdp().browser_context.?.user_agent_changed);
+    try testing.expectEqual(false, ctx.firstBrowserContext().?.user_agent_changed);
 }
 
 test "cdp.Emulation: setUserAgentOverride ignores mozilla case insensitive" {
@@ -154,7 +154,7 @@ test "cdp.Emulation: setUserAgentOverride ignores mozilla case insensitive" {
     });
 
     try ctx.expectSentResult(null, .{});
-    try testing.expectEqual(false, ctx.cdp().browser_context.?.user_agent_changed);
+    try testing.expectEqual(false, ctx.firstBrowserContext().?.user_agent_changed);
 }
 
 test "cdp.Emulation: setUserAgentOverride rejects non-printable characters" {

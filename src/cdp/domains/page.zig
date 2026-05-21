@@ -1154,10 +1154,10 @@ test "cdp.frame: reload replays POST navigation" {
     // Manually wire up the browser context: loadBrowserContext only does GET
     // navigations, but we need the first navigation to be POST.
     const cdp_inst = ctx.cdp();
-    _ = try cdp_inst.createBrowserContext();
-    var bc = &cdp_inst.browser_context.?;
+    const bc = try cdp_inst.createBrowserContext();
     bc.id = "BID-A6";
     bc.session_id = "SID-X";
+    try cdp_inst.registerSessionId("SID-X", bc);
     bc.target_id = "TID-A6-0000000".*;
 
     // First navigation: POST a form-style payload to /echo_method.
@@ -1211,10 +1211,10 @@ test "cdp.frame: reload after POST→redirect drops the POST" {
     defer ctx.deinit();
 
     const cdp_inst = ctx.cdp();
-    _ = try cdp_inst.createBrowserContext();
-    var bc = &cdp_inst.browser_context.?;
+    const bc = try cdp_inst.createBrowserContext();
     bc.id = "BID-A6R";
     bc.session_id = "SID-XR";
+    try cdp_inst.registerSessionId("SID-XR", bc);
     bc.target_id = "TID-A6R-000000".*;
 
     // First navigation: POST /redirect_to_echo → 302 → GET /echo_method.
@@ -1321,10 +1321,10 @@ test "cdp.frame: anchor click sends Referer matching the originating page" {
     defer ctx.deinit();
 
     const cdp_inst = ctx.cdp();
-    _ = try cdp_inst.createBrowserContext();
-    var bc = &cdp_inst.browser_context.?;
+    const bc = try cdp_inst.createBrowserContext();
     bc.id = "BID-A18";
     bc.session_id = "SID-A18";
+    try cdp_inst.registerSessionId("SID-A18", bc);
     bc.target_id = "TID-A18-000000".*;
 
     // Initial navigation to the page hosting the anchor — driven directly via
@@ -1372,10 +1372,10 @@ test "cdp.frame: address-bar Page.navigate sends no Referer" {
     defer ctx.deinit();
 
     const cdp_inst = ctx.cdp();
-    _ = try cdp_inst.createBrowserContext();
-    var bc = &cdp_inst.browser_context.?;
+    const bc = try cdp_inst.createBrowserContext();
     bc.id = "BID-A18B";
     bc.session_id = "SID-A18B";
+    try cdp_inst.registerSessionId("SID-A18B", bc);
     bc.target_id = "TID-A18B-00000".*;
 
     {

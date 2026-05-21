@@ -30,6 +30,7 @@ const Network = @import("network/Network.zig");
 pub const ArenaPool = @import("ArenaPool.zig");
 pub const BrowserPool = @import("BrowserPool.zig");
 pub const SharedCache = @import("SharedCache.zig");
+pub const HealthMonitor = @import("HealthMonitor.zig");
 
 const log = lp.log;
 const Allocator = std.mem.Allocator;
@@ -49,6 +50,7 @@ v8_mutex: std.Thread.Mutex = .{},
 shared_env: ?js.Env = null,
 browser_pool: ?BrowserPool = null,
 shared_cache: ?SharedCache = null,
+health_monitor: ?HealthMonitor = null,
 
 pub fn init(allocator: Allocator, config: *const Config) !*App {
     const platform = try Platform.init();
@@ -121,12 +123,25 @@ pub fn deinitSharedCache(self: *App) void {
     }
 }
 
+pub fn startHealthMonitor(self: *App, interval_ms: u64) !void {
+    self.health_monitor = HealthMonitor.init(self);
+    try self.health_monitor.?.start(interval_ms);
+}
+
+pub fn stopHealthMonitor(self: *App) void {
+    if (self.health_monitor) |*monitor| {
+        monitor.stop();
+        self.health_monitor = null;
+    }
+}
+
 pub fn deinit(self: *App) void {
     const allocator = self.allocator;
     if (self.app_dir_path) |app_dir_path| {
         allocator.free(app_dir_path);
         self.app_dir_path = null;
     }
+    self.stopHealthMonitor();
     self.deinitBrowserPool();
     self.deinitSharedCache();
     self.telemetry.deinit(allocator);

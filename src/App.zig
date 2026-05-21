@@ -28,6 +28,7 @@ const Telemetry = @import("telemetry/telemetry.zig").Telemetry;
 const Storage = @import("storage/Storage.zig");
 const Network = @import("network/Network.zig");
 pub const ArenaPool = @import("ArenaPool.zig");
+pub const BrowserPool = @import("BrowserPool.zig");
 
 const log = lp.log;
 const Allocator = std.mem.Allocator;
@@ -45,6 +46,7 @@ arena_pool: ArenaPool,
 app_dir_path: ?[]const u8,
 v8_mutex: std.Thread.Mutex = .{},
 shared_env: ?js.Env = null,
+browser_pool: ?BrowserPool = null,
 
 pub fn init(allocator: Allocator, config: *const Config) !*App {
     const platform = try Platform.init();
@@ -94,12 +96,25 @@ pub fn getOrCreateSharedEnv(self: *App) !*js.Env {
     return &self.shared_env.?;
 }
 
+pub fn initBrowserPool(self: *App, config: BrowserPool.PoolConfig) !void {
+    self.browser_pool = BrowserPool.init(self, config);
+    try self.browser_pool.?.warmUp();
+}
+
+pub fn deinitBrowserPool(self: *App) void {
+    if (self.browser_pool) |*pool| {
+        pool.deinit();
+        self.browser_pool = null;
+    }
+}
+
 pub fn deinit(self: *App) void {
     const allocator = self.allocator;
     if (self.app_dir_path) |app_dir_path| {
         allocator.free(app_dir_path);
         self.app_dir_path = null;
     }
+    self.deinitBrowserPool();
     self.telemetry.deinit(allocator);
     self.network.deinit();
     if (self.shared_env) |*env| {

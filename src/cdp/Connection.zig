@@ -294,6 +294,12 @@ fn handleHttpRequest(self: *Connection, request: []u8) !HttpResult {
         return .close;
     }
 
+    if (std.mem.eql(u8, url, "/json/health") or std.mem.eql(u8, url, "/json/health/")) {
+        try self.send(health_response);
+        self.shutdown();
+        return .close;
+    }
+
     return error.NotFound;
 }
 
@@ -303,6 +309,14 @@ const empty_json_list_response =
     "Connection: Close\r\n" ++
     "Content-Type: application/json; charset=UTF-8\r\n\r\n" ++
     "[]";
+
+const health_response_body = "{\"status\":\"ok\"}";
+const health_response =
+    "HTTP/1.1 200 OK\r\n" ++
+    "Content-Length: " ++ std.fmt.comptimePrint("{d}", .{health_response_body.len}) ++ "\r\n" ++
+    "Connection: Close\r\n" ++
+    "Content-Type: application/json; charset=UTF-8\r\n\r\n" ++
+    health_response_body;
 
 // Framing-only iteration over received bytes. processMessages no
 // longer auto-replies pong/close or sends close-on-error — the Network

@@ -200,6 +200,34 @@ Here are the key features we have implemented:
 
 NOTE: There are hundreds of Web APIs. Developing a browser (even just for headless mode) is a huge task. Coverage will increase over time.
 
+## Multi-Tenancy Architecture
+
+Lightpanda supports multiple concurrent BrowserContexts per CDP connection, enabling multi-tenant workloads within a single process.
+
+### Current Implementation (Level 1)
+
+Each CDP WebSocket connection can host N isolated BrowserContexts, each with its own:
+- **Session** and **Page** (navigation, DOM, JS execution)
+- **Inspector session** with unique context group ID (DevTools isolation)
+- **Arena allocators** (frame, notification, browser-context scoped)
+- **Target ID** and **Session ID** (CDP protocol routing)
+
+BrowserContexts share a single **V8 Isolate** (~5 MiB) and **HTTP connection pool** per connection, keeping per-context overhead minimal.
+
+**Key changes:**
+- `CDP` stores a `StringHashMap(*BrowserContext)` and a `session_to_context` map for O(1) dispatch routing
+- `Browser` supports a pool of concurrent `Session` objects
+- `Inspector` manages multiple sessions with per-context group IDs
+- `Target.*` commands resolve contexts by `browserContextId`, `targetId`, or `sessionId`
+
+### Planned: Shared V8 Isolate (Level 2)
+
+Multiple CDP connections sharing one V8 Isolate — one 5 MiB cost for all connections instead of N × 5 MiB. Requires mutex-serialized V8 access at tick boundaries since V8 Isolates are not thread-safe.
+
+### Planned: Browser-as-a-Service (Level 3)
+
+Pool management with pre-warming, shared parsed-resource caches, memory pressure eviction, and health monitoring via `/json/health` endpoint.
+
 ## Build from sources
 
 ### Prerequisites

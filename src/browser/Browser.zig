@@ -117,6 +117,15 @@ pub fn deinit(self: *Browser) void {
     self.http_client.deinit();
 }
 
+pub fn reset(self: *Browser) void {
+    for (self.active_sessions.items) |session| {
+        session.deinit();
+        self.session_pool.destroy(session);
+    }
+    self.active_sessions.clearRetainingCapacity();
+    self.frame_id_gen = 0;
+}
+
 pub fn newSession(self: *Browser, notification: *Notification) !*Session {
     const session = try self.session_pool.create();
     errdefer self.session_pool.destroy(session);

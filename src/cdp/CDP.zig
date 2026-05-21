@@ -56,7 +56,7 @@ const CDP = @This();
 
 app: *App,
 conn: Connection,
-browser: Browser,
+browser: *Browser,
 allocator: Allocator,
 
 // Network-thread read-side handle for the CDP socket. Populated in
@@ -99,7 +99,24 @@ pub fn init(
         .message_arena = std.heap.ArenaAllocator.init(allocator),
     };
 
-    try self.browser.init(app, .{ .env = .{ .with_inspector = true } }, self);
+    const browser = if (app.browser_pool) |*pool|
+        try pool.acquire(self)
+    else blk: {
+        const b = try allocator.create(Browser);
+        errdefer allocator.destroy(b);
+        try b.init(app, .{ .env = .{ .with_inspector = true } }, self);
+        break :blk b;
+    };
+    errdefer {
+        if (app.browser_pool) |*pool| {
+            pool.release(browser);
+        } else {
+            browser.deinit();
+            allocator.destroy(browser);
+        }
+    }
+    self.browser = browser;
+
     const http_client = &self.browser.http_client;
 
     try self.conn.init(allocator, socket, json_version_response, &http_client.inbox, &app.arena_pool);
@@ -122,7 +139,12 @@ pub fn deinit(self: *CDP) void {
     self.browser_contexts.deinit(self.allocator);
     self.browser_context_pool.deinit();
     self.session_to_context.deinit(self.allocator);
-    self.browser.deinit();
+    if (self.app.browser_pool) |*pool| {
+        pool.release(self.browser);
+    } else {
+        self.browser.deinit();
+        self.allocator.destroy(self.browser);
+    }
     self.message_arena.deinit();
     self.conn.deinit();
 }
@@ -593,7 +615,7 @@ pub const BrowserContext = struct {
             lp.cookies.loadFromFile(session, cookie_path);
         }
 
-        const browser = &cdp.browser;
+        const browser = cdp.browser;
         const inspector_session = try browser.env.inspector.?.startSession(self);
         errdefer browser.env.inspector.?.stopSession(inspector_session);
 

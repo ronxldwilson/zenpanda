@@ -63,19 +63,16 @@ pub fn acquire(self: *BrowserPool, cdp: ?*CDP) !*Browser {
     self.mutex.lock();
     defer self.mutex.unlock();
 
-    if (self.idle.items.len > 0) {
-        const browser = self.idle.pop();
-        return browser;
-    }
-
-    if (self.all.items.len >= self.config.max_total) {
+    const browser = if (self.idle.items.len > 0)
+        self.idle.pop()
+    else if (self.all.items.len < self.config.max_total)
+        try self.createBrowserLocked()
+    else
         return error.PoolExhausted;
-    }
 
-    const browser = try self.createBrowserLocked();
-    // Wire up CDP connection if provided
-    if (cdp) |c| {
-        try browser.http_client.init(self.allocator, &self.app.network, c);
+    if (cdp) |_| {
+        browser.http_client.deinit();
+        try browser.http_client.init(self.allocator, &self.app.network, cdp);
     }
     return browser;
 }
@@ -84,13 +81,7 @@ pub fn release(self: *BrowserPool, browser: *Browser) void {
     self.mutex.lock();
     defer self.mutex.unlock();
 
-    // Reset browser state for reuse
-    for (browser.active_sessions.items) |session| {
-        session.deinit();
-        browser.session_pool.destroy(session);
-    }
-    browser.active_sessions.clearRetainingCapacity();
-    browser.frame_id_gen = 0;
+    browser.reset();
 
     if (self.idle.items.len < self.config.min_warm * 2) {
         self.idle.append(self.allocator, browser) catch {
@@ -124,7 +115,10 @@ fn createBrowserLocked(self: *BrowserPool) !*Browser {
     const browser = try self.allocator.create(Browser);
     errdefer self.allocator.destroy(browser);
 
-    try browser.init(self.app, .{ .shared_env = self.config.shared_env }, null);
+    try browser.init(self.app, .{
+        .env = .{ .with_inspector = true },
+        .shared_env = self.config.shared_env,
+    }, null);
     errdefer browser.deinit();
 
     try self.all.append(self.allocator, browser);

@@ -29,6 +29,7 @@ const Storage = @import("storage/Storage.zig");
 const Network = @import("network/Network.zig");
 pub const ArenaPool = @import("ArenaPool.zig");
 pub const BrowserPool = @import("BrowserPool.zig");
+pub const SharedCache = @import("SharedCache.zig");
 
 const log = lp.log;
 const Allocator = std.mem.Allocator;
@@ -47,6 +48,7 @@ app_dir_path: ?[]const u8,
 v8_mutex: std.Thread.Mutex = .{},
 shared_env: ?js.Env = null,
 browser_pool: ?BrowserPool = null,
+shared_cache: ?SharedCache = null,
 
 pub fn init(allocator: Allocator, config: *const Config) !*App {
     const platform = try Platform.init();
@@ -108,6 +110,17 @@ pub fn deinitBrowserPool(self: *App) void {
     }
 }
 
+pub fn initSharedCache(self: *App, max_bytes: usize) void {
+    self.shared_cache = SharedCache.init(self.allocator, max_bytes);
+}
+
+pub fn deinitSharedCache(self: *App) void {
+    if (self.shared_cache) |*cache| {
+        cache.deinit();
+        self.shared_cache = null;
+    }
+}
+
 pub fn deinit(self: *App) void {
     const allocator = self.allocator;
     if (self.app_dir_path) |app_dir_path| {
@@ -115,6 +128,7 @@ pub fn deinit(self: *App) void {
         self.app_dir_path = null;
     }
     self.deinitBrowserPool();
+    self.deinitSharedCache();
     self.telemetry.deinit(allocator);
     self.network.deinit();
     if (self.shared_env) |*env| {

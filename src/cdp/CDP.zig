@@ -235,7 +235,8 @@ pub fn tick(self: *CDP) !bool {
 }
 
 fn pageWait(self: *CDP, ms: u32) !void {
-    const session = &(self.browser.session orelse return error.NoPage);
+    const bc = &(self.browser_context orelse return error.NoPage);
+    const session = bc.session;
     var runner = try session.runner(.{});
     return runner.waitCDP(.{ .ms = ms });
 }
@@ -408,7 +409,6 @@ pub fn disposeBrowserContext(self: *CDP, browser_context_id: []const u8) bool {
         return false;
     }
     bc.deinit();
-    self.browser.closeSession();
     self.browser_context = null;
     return true;
 }
@@ -638,7 +638,7 @@ pub const BrowserContext = struct {
         // If the session has a frame, we need to clear it first. The page
         // context is always nested inside of the isolated world context,
         // so we need to shutdown the page one first.
-        browser.closeSession();
+        browser.closeSession(self.session);
 
         self.node_registry.deinit();
         self.node_search_list.deinit();

@@ -52,7 +52,7 @@ pub fn main() !void {
     defer notification.deinit();
 
     const session = try browser.newSession(notification);
-    defer session.deinit();
+    defer browser.closeSession(session);
 
     var dir = try std.fs.cwd().openDir("src/browser/tests/legacy/", .{ .iterate = true, .no_follow = true });
     defer dir.close();

@@ -33,18 +33,19 @@ const Notification = @import("../Notification.zig");
 
 // Browser is an instance of the browser.
 // You can create multiple browser instances.
-// A browser contains only one session.
+// A browser supports multiple concurrent sessions.
 const Browser = @This();
 
 env: js.Env,
 app: *App,
-session: ?Session,
 allocator: Allocator,
 arena_pool: *ArenaPool,
 http_client: HttpClient,
 
 // used by sessions to allocate pages.
 page_pool: std.heap.MemoryPool(Page),
+session_pool: std.heap.MemoryPool(Session),
+active_sessions: std.ArrayList(*Session),
 
 // Monotonic frame-ID generator scoped to this Browser (one per CDP
 // connection). Lives here, not on Session, because CDP target IDs
@@ -79,35 +80,45 @@ pub fn init(self: *Browser, app: *App, opts: InitOpts, cdp: ?*CDP) !void {
     self.* = .{
         .app = app,
         .env = env,
-        .session = null,
         .allocator = allocator,
         .arena_pool = &app.arena_pool,
         .http_client = undefined,
         .page_pool = std.heap.MemoryPool(Page).init(allocator),
+        .session_pool = std.heap.MemoryPool(Session).init(allocator),
+        .active_sessions = std.ArrayList(*Session).init(allocator),
     };
     try self.http_client.init(allocator, &app.network, cdp);
 }
 
 pub fn deinit(self: *Browser) void {
-    self.closeSession();
+    for (self.active_sessions.items) |session| {
+        session.deinit();
+        self.session_pool.destroy(session);
+    }
+    self.active_sessions.deinit();
     self.env.deinit();
     self.page_pool.deinit();
+    self.session_pool.deinit();
     self.http_client.deinit();
 }
 
 pub fn newSession(self: *Browser, notification: *Notification) !*Session {
-    self.closeSession();
-    self.session = @as(Session, undefined);
-    const session = &self.session.?;
+    const session = try self.session_pool.create();
+    errdefer self.session_pool.destroy(session);
     try Session.init(session, self, notification);
+    try self.active_sessions.append(session);
     return session;
 }
 
-pub fn closeSession(self: *Browser) void {
-    if (self.session) |*session| {
-        session.deinit();
-        self.session = null;
+pub fn closeSession(self: *Browser, session: *Session) void {
+    for (self.active_sessions.items, 0..) |s, i| {
+        if (s == session) {
+            _ = self.active_sessions.swapRemove(i);
+            break;
+        }
     }
+    session.deinit();
+    self.session_pool.destroy(session);
 }
 
 pub fn runMicrotasks(self: *Browser) void {

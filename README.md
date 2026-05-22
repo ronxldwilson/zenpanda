@@ -202,9 +202,9 @@ NOTE: There are hundreds of Web APIs. Developing a browser (even just for headle
 
 ## Multi-Tenancy Architecture
 
-Lightpanda supports multiple concurrent BrowserContexts per CDP connection, enabling multi-tenant workloads within a single process.
+Lightpanda supports multi-tenant workloads within a single process, packing many concurrent browser sessions into minimal memory.
 
-### Current Implementation (Level 1)
+### Level 1: Multiple BrowserContexts per CDP Connection
 
 Each CDP WebSocket connection can host N isolated BrowserContexts, each with its own:
 - **Session** and **Page** (navigation, DOM, JS execution)
@@ -214,19 +214,36 @@ Each CDP WebSocket connection can host N isolated BrowserContexts, each with its
 
 BrowserContexts share a single **V8 Isolate** (~5 MiB) and **HTTP connection pool** per connection, keeping per-context overhead minimal.
 
-**Key changes:**
+**Key internals:**
 - `CDP` stores a `StringHashMap(*BrowserContext)` and a `session_to_context` map for O(1) dispatch routing
 - `Browser` supports a pool of concurrent `Session` objects
 - `Inspector` manages multiple sessions with per-context group IDs
 - `Target.*` commands resolve contexts by `browserContextId`, `targetId`, or `sessionId`
 
-### Planned: Shared V8 Isolate (Level 2)
+### Level 2: Shared V8 Isolate Across Connections
 
-Multiple CDP connections sharing one V8 Isolate — one 5 MiB cost for all connections instead of N × 5 MiB. Requires mutex-serialized V8 access at tick boundaries since V8 Isolates are not thread-safe.
+Multiple CDP connections share one V8 Isolate — one 5 MiB cost for all connections instead of N × 5 MiB. A `std.Thread.Mutex` on `App` serializes all V8 access at tick boundaries since V8 Isolates are not thread-safe.
 
-### Planned: Browser-as-a-Service (Level 3)
+- `Browser.env` is a borrowed `*js.Env` pointer (owned or shared via `App.getOrCreateSharedEnv()`)
+- Context limit increased to 256 per isolate
+- No v8::Locker needed — mutex serialization at the CDP tick level
 
-Pool management with pre-warming, shared parsed-resource caches, memory pressure eviction, and health monitoring via `/json/health` endpoint.
+### Level 3: Browser-as-a-Service
+
+Pool management, shared caches, memory pressure eviction, and health monitoring.
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **BrowserPool** | `src/BrowserPool.zig` | Thread-safe pool with min_warm/max_total config, acquire/release lifecycle, idle eviction |
+| **SharedCache** | `src/SharedCache.zig` | LRU cache keyed by URL for sharing parsed resources across browsers |
+| **HealthMonitor** | `src/HealthMonitor.zig` | Background thread for periodic memory pressure checks and pool stats |
+
+**Features:**
+- Pre-warm browser instances at startup (`initBrowserPool` with `min_warm`)
+- V8 `lowMemoryNotification` on every pool release
+- Configurable heap limit with automatic idle eviction under pressure
+- `/json/health` HTTP endpoint for liveness checks
+- `SharedCache` with hit/miss stats and configurable memory cap
 
 ## Build from sources
 

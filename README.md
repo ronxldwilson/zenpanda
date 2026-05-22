@@ -1,3 +1,6 @@
+<p align="center">
+  <img src="50674665-00aa-4be4-8f95-42ffd41d7df4.png" alt="ZenPanda Logo" height=200>
+</p>
 <h1 align="center">ZenPanda Browser</h1>
 <p align="center">
 <strong>A multi-tenant headless browser for AI agents and automation at scale.</strong><br>

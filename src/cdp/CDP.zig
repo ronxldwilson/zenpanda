@@ -246,9 +246,11 @@ pub fn tick(self: *CDP) !bool {
     // Server.configureSocket; the wakeup lets V8 run or terminate.
     const wait_ms: u32 = 1000; // 1s
 
-    // Serialize V8 access across connections sharing an isolate.
-    self.browser.app.v8_mutex.lock();
-    defer self.browser.app.v8_mutex.unlock();
+    // Serialize V8 access only when connections share an isolate.
+    // Per-browser isolates (owns_env=true) can run concurrently.
+    const needs_lock = !self.browser.owns_env;
+    if (needs_lock) self.browser.app.v8_mutex.lock();
+    defer if (needs_lock) self.browser.app.v8_mutex.unlock();
 
     self.pageWait(wait_ms) catch |wait_err| switch (wait_err) {
         error.NoPage => {

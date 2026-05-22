@@ -10,4 +10,4 @@ RUN chmod +x /bin/zenpanda
 EXPOSE 9222/tcp
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/bin/zenpanda", "serve", "--host", "0.0.0.0", "--port", "9222", "--log-level", "info"]
+CMD ["/bin/zenpanda", "serve", "--host", "0.0.0.0", "--port", "9222", "--log-level", "info", "--cdp-max-connections", "100"]

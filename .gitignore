@@ -9,6 +9,6 @@ src/snapshot.bin
 .html5ever-linux
 v8
 dist/
-bench/bench
-bench/loadtest
+bench/multitest
 bench/go.sum
+bench/*_results.txt

@@ -2,4 +2,7 @@
 .zig-cache
 zig-out
 zig-pkg
+.toolchain
+.html5ever-linux
+v8
 *.png

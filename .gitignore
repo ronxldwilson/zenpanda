@@ -5,3 +5,10 @@ zig-out
 lightpanda.id
 /src/html5ever/target/
 src/snapshot.bin
+.toolchain
+.html5ever-linux
+v8
+dist/
+bench/bench
+bench/loadtest
+bench/go.sum

@@ -1,4 +1,4 @@
-FROM debian:stable-slim
+FROM debian:stable-slim AS toolchain
 
 ARG MINISIG=0.12
 ARG ZIG_MINISIG=RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U
@@ -9,7 +9,7 @@ ARG TARGETPLATFORM
 RUN apt-get update -yq && \
     apt-get install -yq --no-install-recommends xz-utils ca-certificates \
         pkg-config libglib2.0-dev \
-        clang make curl git && \
+        clang make curl git tini && \
     rm -rf /var/lib/apt/lists/*
 
 # Get Rust
@@ -20,14 +20,12 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 # install minisig
 RUN curl --fail -L --retry 3 --retry-delay 2 -O https://github.com/jedisct1/minisign/releases/download/${MINISIG}/minisign-${MINISIG}-linux.tar.gz && \
-    tar xzf minisign-${MINISIG}-linux.tar.gz -C /
+    tar xzf minisign-${MINISIG}-linux.tar.gz -C / && \
+    rm minisign-${MINISIG}-linux.tar.gz
 
-# copy local sources instead of cloning
-COPY . /browser
-WORKDIR /browser
-
-# install zig
-RUN ZIG=$(grep '\.minimum_zig_version = "' "build.zig.zon" | cut -d'"' -f2) && \
+# install zig — copy only build.zig.zon first to read the version (cache-friendly)
+COPY build.zig.zon /tmp/build.zig.zon
+RUN ZIG=$(grep '\.minimum_zig_version = "' "/tmp/build.zig.zon" | cut -d'"' -f2) && \
     case $TARGETPLATFORM in \
       "linux/arm64") ARCH="aarch64" ;; \
       *) ARCH="x86_64" ;; \
@@ -37,40 +35,49 @@ RUN ZIG=$(grep '\.minimum_zig_version = "' "build.zig.zon" | cut -d'"' -f2) && \
     /minisign-linux/${ARCH}/minisign -Vm zig-${ARCH}-linux-${ZIG}.tar.xz -P ${ZIG_MINISIG} && \
     tar xf zig-${ARCH}-linux-${ZIG}.tar.xz && \
     mv zig-${ARCH}-linux-${ZIG} /usr/local/lib && \
-    ln -s /usr/local/lib/zig-${ARCH}-linux-${ZIG}/zig /usr/local/bin/zig
+    ln -s /usr/local/lib/zig-${ARCH}-linux-${ZIG}/zig /usr/local/bin/zig && \
+    rm zig-${ARCH}-linux-${ZIG}.tar.xz*
 
-# download and install v8
+# download v8
 RUN case $TARGETPLATFORM in \
     "linux/arm64") ARCH="aarch64" ;; \
     *) ARCH="x86_64" ;; \
     esac && \
-    curl --fail -L --retry 3 --retry-delay 2 -o libc_v8.a https://github.com/lightpanda-io/zig-v8-fork/releases/download/${ZIG_V8}/libc_v8_${V8}_linux_${ARCH}.a && \
-    mkdir -p v8/ && \
-    mv libc_v8.a v8/libc_v8.a
+    mkdir -p /v8 && \
+    curl --fail -L --retry 3 --retry-delay 2 -o /v8/libc_v8.a https://github.com/lightpanda-io/zig-v8-fork/releases/download/${ZIG_V8}/libc_v8_${V8}_linux_${ARCH}.a
 
-# build v8 snapshot
+# --- Build html5ever (Rust) separately so it's cached unless Cargo files change ---
+FROM toolchain AS html5ever
+COPY src/html5ever /browser/src/html5ever
+RUN cd /browser/src/html5ever && cargo build --release
+
+# --- Main build ---
+FROM toolchain AS build
+
+# copy prebuilt html5ever
+COPY --from=html5ever /browser/src/html5ever/target /browser/src/html5ever/target
+
+# copy v8
+RUN mkdir -p /browser/v8 && cp /v8/libc_v8.a /browser/v8/libc_v8.a
+
+# copy full source
+COPY . /browser
+WORKDIR /browser
+
+# build v8 snapshot then main binary
 RUN zig build -Doptimize=ReleaseFast \
     -Dprebuilt_v8_path=v8/libc_v8.a \
-    snapshot_creator -- src/snapshot.bin
-
-# build release
-RUN zig build -Doptimize=ReleaseFast \
+    snapshot_creator -- src/snapshot.bin && \
+    zig build -Doptimize=ReleaseFast \
     -Dsnapshot_path=../../snapshot.bin \
     -Dprebuilt_v8_path=v8/libc_v8.a
 
+# --- Final minimal image ---
 FROM debian:stable-slim
 
-RUN apt-get update -yq && \
-    apt-get install -yq --no-install-recommends tini && \
-    rm -rf /var/lib/apt/lists/*
-
-FROM debian:stable-slim
-
-# copy ca certificates
-COPY --from=0 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-
-COPY --from=0 /browser/zig-out/bin/zenpanda /bin/zenpanda
-COPY --from=1 /usr/bin/tini /usr/bin/tini
+COPY --from=toolchain /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=toolchain /usr/bin/tini /usr/bin/tini
+COPY --from=build /browser/zig-out/bin/zenpanda /bin/zenpanda
 
 EXPOSE 9222/tcp
 

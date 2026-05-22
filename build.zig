@@ -40,6 +40,7 @@ pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const prebuilt_v8_path = b.option([]const u8, "prebuilt_v8_path", "Path to prebuilt libc_v8.a");
+    const prebuilt_html5ever_path = b.option([]const u8, "prebuilt_html5ever_path", "Path to prebuilt liblitefetch_html5ever.a");
     const snapshot_path = b.option([]const u8, "snapshot_path", "Path to v8 snapshot");
     const wpt_extensions = b.option(bool, "wpt_extensions", "Extend WebAPI with WPT driver behavior") orelse false;
 
@@ -86,7 +87,7 @@ pub fn build(b: *Build) !void {
 
         try linkV8(b, mod, enable_asan, enable_tsan, prebuilt_v8_path);
         try linkCurl(b, mod, enable_tsan);
-        try linkHtml5Ever(b, mod);
+        try linkHtml5Ever(b, mod, prebuilt_html5ever_path);
 
         break :blk mod;
     };
@@ -241,7 +242,12 @@ fn linkV8(
     mod.addImport("v8", dep.module("v8"));
 }
 
-fn linkHtml5Ever(b: *Build, mod: *Build.Module) !void {
+fn linkHtml5Ever(b: *Build, mod: *Build.Module, prebuilt_path: ?[]const u8) !void {
+    if (prebuilt_path) |path| {
+        mod.addObjectFile(.{ .cwd_relative = path });
+        return;
+    }
+
     const is_debug = if (mod.optimize.? == .Debug) true else false;
 
     const exec_cargo = b.addSystemCommand(&.{

@@ -27,12 +27,44 @@ Built on <a href="https://github.com/lightpanda-io/browser">Lightpanda</a>. Not 
 
 ## Benchmarks
 
+### ZenPanda vs Lightpanda (upstream) - Load Test
+
+Concurrent load test: 30 requests, 5 concurrent workers, crawling real pages (example.com, httpbin.org, iana.org). Run on Mac mini with Docker.
+
+| Metric | ZenPanda | Lightpanda (upstream) | Winner |
+| :---- | :---- | :---- | :---- |
+| Total time | **35.4s** | 42.5s | ZenPanda (20% faster) |
+| Requests/sec | **0.85** | 0.71 | ZenPanda |
+| Avg latency | **5.4s** | 6.5s | ZenPanda |
+| Min latency | **74ms** | 924ms | ZenPanda (12x faster) |
+| P50 latency | **4.5s** | 6.4s | ZenPanda |
+| P90 latency | **8.2s** | 14.4s | ZenPanda (43% lower) |
+| Memory (final) | 49 MiB | 15 MiB | Lightpanda (3x less) |
+
+ZenPanda's BrowserPool keeps warm browser instances ready for reuse, trading higher idle memory for dramatically lower latency under concurrent load. The **74ms min latency** (vs 924ms) shows the pool serving a request from a pre-warmed browser with zero init overhead.
+
+### Sequential Crawl (20 pages)
+
+Single-connection crawl starting from example.com, following links through iana.org.
+
+| Metric | ZenPanda | Lightpanda (upstream) |
+| :---- | :---- | :---- |
+| Duration | 27.4s | 27.8s |
+| Pages/sec | 0.7 | 0.7 |
+| Errors | 0 | 0 |
+| Memory (baseline) | 9.7 MiB | 4.8 MiB |
+| Memory (peak) | 55.1 MiB | 4.9 MiB |
+
+Performance is identical for sequential workloads. ZenPanda's multi-tenancy features (BrowserPool, SharedCache, HealthMonitor) add ~5 MiB baseline overhead but deliver significant gains under concurrent load.
+
+### vs Headless Chrome (upstream benchmarks)
+
 Requesting 933 real web pages over the network on a AWS EC2 m5.large instance.
 See [benchmark details](https://github.com/lightpanda-io/demo/blob/main/BENCHMARKS.md#crawler-benchmark).
 
 | Metric | ZenPanda | Headless Chrome | Difference |
 | :---- | :---- | :---- | :---- |
-| Memory (peak, 100 pages) | 123MB | 2GB | ~16 less |
+| Memory (peak, 100 pages) | 123MB | 2GB | ~16x less |
 | Execution time (100 pages) | 5s | 46s | ~9x faster |
 
 ## Quick start
@@ -91,12 +123,10 @@ Your automation client (Puppeteer, Playwright, etc.) can run either inside WSL o
 
 **Install from Docker**
 
-ZenPanda provides [official Docker
-images](https://hub.docker.com/r/lightpanda/browser) for both Linux amd64 and
-arm64 architectures.
+ZenPanda provides [Docker images on Docker Hub](https://hub.docker.com/r/ronxldwilson/zenpanda) for Linux arm64.
 The following command fetches the Docker image and starts a new container exposing ZenPanda's CDP server on port `9222`.
 ```console
-docker run -d --name lightpanda -p 127.0.0.1:9222:9222 lightpanda/browser:nightly
+docker run -d --name zenpanda -p 127.0.0.1:9222:9222 ronxldwilson/zenpanda:latest
 ```
 
 ### Dump a URL

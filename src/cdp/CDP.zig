@@ -312,7 +312,10 @@ fn dispatchParsed(self: *CDP, arena: Allocator, sender: Command.Sender, str: []c
         } else {
             var err_command = Command{
                 .input = .{ .json = str, .id = input.id, .action = "", .params = input.params, .session_id = input.sessionId },
-                .cdp = self, .arena = arena, .sender = sender, .browser_context = null,
+                .cdp = self,
+                .arena = arena,
+                .sender = sender,
+                .browser_context = null,
             };
             return err_command.sendError(-32001, "Unknown sessionId", .{});
         }

@@ -65,8 +65,8 @@ pub fn acquire(self: *BrowserPool, cdp: ?*CDP) !*Browser {
     self.mutex.lock();
     defer self.mutex.unlock();
 
-    const browser = if (self.idle.items.len > 0)
-        self.idle.pop()
+    const browser: *Browser = if (self.idle.items.len > 0)
+        self.idle.pop().?
     else if (self.all.items.len < self.config.max_total)
         try self.createBrowserLocked()
     else

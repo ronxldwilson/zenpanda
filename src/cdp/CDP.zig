@@ -662,7 +662,7 @@ pub const BrowserContext = struct {
     }
 
     pub fn deinit(self: *BrowserContext) void {
-        const browser = &self.cdp.browser;
+        const browser = self.cdp.browser;
         const env = browser.env;
 
         // resetContextGroup detach the inspector from all contexts.
@@ -738,7 +738,7 @@ pub const BrowserContext = struct {
     }
 
     pub fn createIsolatedWorld(self: *BrowserContext, world_name: []const u8, grant_universal_access: bool) !*IsolatedWorld {
-        const browser = &self.cdp.browser;
+        const browser = self.cdp.browser;
         const arena = try browser.arena_pool.acquire(.small, "IsolatedWorld");
         errdefer browser.arena_pool.release(arena);
 

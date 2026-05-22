@@ -75,12 +75,12 @@ build-dev:
 ## Run the server in release mode
 run: build
 	@printf "\033[36mRunning...\033[0m\n"
-	@./zig-out/bin/lightpanda || (printf "\033[33mRun ERROR\033[0m\n"; exit 1;)
+	@./zig-out/bin/zenpanda || (printf "\033[33mRun ERROR\033[0m\n"; exit 1;)
 
 ## Run the server in debug mode
 run-debug: build-dev
 	@printf "\033[36mRunning...\033[0m\n"
-	@./zig-out/bin/lightpanda || (printf "\033[33mRun ERROR\033[0m\n"; exit 1;)
+	@./zig-out/bin/zenpanda || (printf "\033[33mRun ERROR\033[0m\n"; exit 1;)
 
 ## Test - `grep` is used to filter out the huge compile command on build
 ifeq ($(OS), macos)

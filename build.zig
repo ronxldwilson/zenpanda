@@ -110,7 +110,7 @@ pub fn build(b: *Build) !void {
     {
         // browser
         const exe = b.addExecutable(.{
-            .name = "lightpanda",
+            .name = "zenpanda",
             .use_llvm = true,
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/main.zig"),

@@ -44,7 +44,7 @@ RUN case $TARGETPLATFORM in \
     "linux/arm64") ARCH="aarch64" ;; \
     *) ARCH="x86_64" ;; \
     esac && \
-    curl --fail -L --retry 3 --retry-delay 2 -o libc_v8.a https://github.com/zenpanda-io/zig-v8-fork/releases/download/${ZIG_V8}/libc_v8_${V8}_linux_${ARCH}.a && \
+    curl --fail -L --retry 3 --retry-delay 2 -o libc_v8.a https://github.com/lightpanda-io/zig-v8-fork/releases/download/${ZIG_V8}/libc_v8_${V8}_linux_${ARCH}.a && \
     mkdir -p v8/ && \
     mv libc_v8.a v8/libc_v8.a
 

@@ -17,6 +17,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const lp = @import("lightpanda");
 
 const App = @import("../App.zig");
@@ -147,6 +148,14 @@ pub fn deinit(self: *CDP) void {
     }
     self.message_arena.deinit();
     self.conn.deinit();
+
+    // Return freed pages to the OS so container RSS reflects actual usage.
+    if (comptime builtin.os.tag == .linux) {
+        const c = struct {
+            extern "c" fn malloc_trim(pad: usize) c_int;
+        };
+        _ = c.malloc_trim(0);
+    }
 }
 // Called by Network when readable bytes arrive on the CDP socket.
 // Feeds them through the WS framer and pushes each parsed frame into

@@ -1,10 +1,7 @@
+<h1 align="center">ZenPanda Browser</h1>
 <p align="center">
-  <a href="https://lightpanda.io"><img src="https://cdn.lightpanda.io/assets/images/logo/lpd-logo.png" alt="Logo" height=170></a>
-</p>
-<h1 align="center">Lightpanda Browser</h1>
-<p align="center">
-<strong>The headless browser built from scratch for AI agents and automation.</strong><br>
-Not a Chromium fork. Not a WebKit patch. A new browser, written in Zig.
+<strong>A multi-tenant headless browser for AI agents and automation at scale.</strong><br>
+Built on <a href="https://github.com/lightpanda-io/browser">Lightpanda</a>. Not a Chromium fork. Written in Zig.
 </p>
 
 </div>
@@ -30,7 +27,7 @@ Not a Chromium fork. Not a WebKit patch. A new browser, written in Zig.
 Requesting 933 real web pages over the network on a AWS EC2 m5.large instance.
 See [benchmark details](https://github.com/lightpanda-io/demo/blob/main/BENCHMARKS.md#crawler-benchmark).
 
-| Metric | Lightpanda | Headless Chrome | Difference |
+| Metric | ZenPanda | Headless Chrome | Difference |
 | :---- | :---- | :---- | :---- |
 | Memory (peak, 100 pages) | 123MB | 2GB | ~16 less |
 | Execution time (100 pages) | 5s | 46s | ~9x faster |
@@ -82,7 +79,7 @@ chmod a+x ./lightpanda
 
 *For Windows + WSL2*
 
-Lightpanda has no native Windows binary. Install it inside WSL following the Linux steps above.
+ZenPanda has no native Windows binary. Install it inside WSL following the Linux steps above.
 
 WSL not installed? Run `wsl --install` from an administrator shell, restart, then open `wsl`.
 See [Microsoft's WSL install guide](https://learn.microsoft.com/en-us/windows/wsl/install) for details.
@@ -91,10 +88,10 @@ Your automation client (Puppeteer, Playwright, etc.) can run either inside WSL o
 
 **Install from Docker**
 
-Lightpanda provides [official Docker
+ZenPanda provides [official Docker
 images](https://hub.docker.com/r/lightpanda/browser) for both Linux amd64 and
 arm64 architectures.
-The following command fetches the Docker image and starts a new container exposing Lightpanda's CDP server on port `9222`.
+The following command fetches the Docker image and starts a new container exposing ZenPanda's CDP server on port `9222`.
 ```console
 docker run -d --name lightpanda -p 127.0.0.1:9222:9222 lightpanda/browser:nightly
 ```
@@ -123,7 +120,7 @@ Once the CDP server started, you can run a Puppeteer script by configuring the
 ```js
 import puppeteer from 'puppeteer-core';
 
-// use browserWSEndpoint to pass the Lightpanda's CDP server address.
+// use browserWSEndpoint to pass the ZenPanda's CDP server address.
 const browser = await puppeteer.connect({
   browserWSEndpoint: "ws://127.0.0.1:9222",
 });
@@ -170,11 +167,11 @@ Add to your MCP configuration:
 A skill is available in [lightpanda-io/agent-skill](https://github.com/lightpanda-io/agent-skill).
 
 ### Telemetry
-By default, Lightpanda collects and sends usage telemetry. This can be disabled by setting an environment variable `LIGHTPANDA_DISABLE_TELEMETRY=true`. You can read Lightpanda's privacy policy at: [https://lightpanda.io/privacy-policy](https://lightpanda.io/privacy-policy).
+By default, ZenPanda collects and sends usage telemetry (via upstream Lightpanda infrastructure). This can be disabled by setting an environment variable `LIGHTPANDA_DISABLE_TELEMETRY=true`. See the upstream [privacy policy](https://lightpanda.io/privacy-policy).
 
 ## Status
 
-Lightpanda is in Beta and currently a work in progress. Stability and coverage are improving and many websites now work.
+ZenPanda is in Beta and currently a work in progress. Stability and coverage are improving and many websites now work.
 You may still encounter errors or crashes. Please open an issue with specifics if so.
 
 Here are the key features we have implemented:
@@ -202,7 +199,7 @@ NOTE: There are hundreds of Web APIs. Developing a browser (even just for headle
 
 ## Multi-Tenancy Architecture
 
-Lightpanda supports multi-tenant workloads within a single process, packing many concurrent browser sessions into minimal memory.
+ZenPanda supports multi-tenant workloads within a single process, packing many concurrent browser sessions into minimal memory.
 
 ### Level 1: Multiple BrowserContexts per CDP Connection
 
@@ -249,10 +246,10 @@ Pool management, shared caches, memory pressure eviction, and health monitoring.
 
 ### Prerequisites
 
-Lightpanda is written with [Zig](https://ziglang.org/) `0.15.2`. You have to
+ZenPanda is written with [Zig](https://ziglang.org/) `0.15.2`. You have to
 install it with the right version in order to build the project.
 
-Lightpanda also depends on
+ZenPanda also depends on
 [v8](https://chromium.googlesource.com/v8/v8.git),
 [Libcurl](https://curl.se/libcurl/) and [html5ever](https://github.com/servo/html5ever).
 
@@ -305,7 +302,7 @@ See [#1279](https://github.com/lightpanda-io/browser/pull/1279) for more details
 
 ### Unit Tests
 
-You can test Lightpanda by running `make test`.
+You can test ZenPanda by running `make test`.
 
 ```bash
 make test                                       # Run all tests
@@ -332,7 +329,7 @@ make end2end
 
 ### Web Platform Tests
 
-Lightpanda is tested against the standardized [Web Platform
+ZenPanda is tested against the standardized [Web Platform
 Tests](https://web-platform-tests.org/).
 
 We use [a fork](https://github.com/lightpanda-io/wpt/tree/fork) including a custom
@@ -378,7 +375,7 @@ First start the WPT's HTTP server from your `wpt/` clone dir.
 ./wpt serve
 ```
 
-Run a Lightpanda browser
+Run a ZenPanda browser
 
 ```
 zig build run -- --insecure-disable-tls-host-verification
@@ -411,7 +408,7 @@ See [CONTRIBUTING.md](https://github.com/lightpanda-io/browser/blob/main/CONTRIB
 You must sign our [CLA](CLA.md) during the pull request process.
 - [Discord](https://discord.gg/K63XeymfB5)
 
-## Why Lightpanda?
+## Why ZenPanda?
 
 ### Javascript execution is mandatory for the modern web
 
@@ -428,7 +425,7 @@ Running a full desktop browser on a server works, but it does not scale well. Ch
 - Hard to package, deploy, and maintain at scale
 - Many features are not necessary in headless made
 
-### Lightpanda is built for performance
+### ZenPanda is built for performance
 
 Supporting Javascript with real performance meant building from scratch rather than forking Chromium:
 

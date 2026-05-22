@@ -273,9 +273,9 @@ fn buildJSONVersionResponse(app: *const App, port: u16) ![]const u8 {
     }
     const body_format =
         "{{" ++
-        "\"Browser\": \"Lightpanda/1.0\", " ++
+        "\"Browser\": \"ZenPanda/1.0\", " ++
         "\"Protocol-Version\": \"1.3\", " ++
-        "\"User-Agent\": \"Lightpanda/1.0\", " ++
+        "\"User-Agent\": \"ZenPanda/1.0\", " ++
         "\"webSocketDebuggerUrl\": \"ws://{s}:{d}/\"" ++
         "}}";
     const body_len = std.fmt.count(body_format, .{ host, port });
@@ -306,7 +306,7 @@ test "server: buildJSONVersionResponse" {
     try testing.expect(std.mem.indexOf(u8, res, "Connection: Close") != null);
 
     // Verify all required JSON fields are present in the body
-    try testing.expect(std.mem.indexOf(u8, res, "\"Browser\": \"Lightpanda/") != null);
+    try testing.expect(std.mem.indexOf(u8, res, "\"Browser\": \"ZenPanda/") != null);
     try testing.expect(std.mem.indexOf(u8, res, "\"Protocol-Version\": \"1.3\"") != null);
     try testing.expect(std.mem.indexOf(u8, res, "\"User-Agent\": \"Lightpanda/") != null);
     try testing.expect(std.mem.indexOf(u8, res, "\"webSocketDebuggerUrl\": \"ws://127.0.0.1:9222/\"") != null);
@@ -528,7 +528,7 @@ test "server: get /json/version" {
 
         const res1 = try c.httpRequest("GET /json/version HTTP/1.1\r\n\r\n");
         try testing.expect(std.mem.startsWith(u8, res1, "HTTP/1.1 200 OK\r\n"));
-        try testing.expect(std.mem.indexOf(u8, res1, "\"Browser\": \"Lightpanda/") != null);
+        try testing.expect(std.mem.indexOf(u8, res1, "\"Browser\": \"ZenPanda/") != null);
         try testing.expect(std.mem.indexOf(u8, res1, "\"Protocol-Version\": \"1.3\"") != null);
         try testing.expect(std.mem.indexOf(u8, res1, "\"webSocketDebuggerUrl\": \"ws://127.0.0.1:9583/\"") != null);
     }
@@ -540,7 +540,7 @@ test "server: get /json/version" {
 
         const res1 = try c.httpRequest("GET /json/version HTTP/1.1\r\n\r\n");
         try testing.expect(std.mem.startsWith(u8, res1, "HTTP/1.1 200 OK\r\n"));
-        try testing.expect(std.mem.indexOf(u8, res1, "\"Browser\": \"Lightpanda/") != null);
+        try testing.expect(std.mem.indexOf(u8, res1, "\"Browser\": \"ZenPanda/") != null);
     }
 }
 

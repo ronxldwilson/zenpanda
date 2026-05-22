@@ -162,7 +162,7 @@ fn getAndMakeAppDir(allocator: Allocator) ?[]const u8 {
     if (@import("builtin").is_test) {
         return allocator.dupe(u8, "/tmp") catch unreachable;
     }
-    const app_dir_path = std.fs.getAppDataDir(allocator, "lightpanda") catch |err| {
+    const app_dir_path = std.fs.getAppDataDir(allocator, "zenpanda") catch |err| {
         log.warn(.app, "get data dir", .{ .err = err });
         return null;
     };

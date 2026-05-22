@@ -7,7 +7,9 @@ RUN apt-get update -yq && \
 COPY dist/zenpanda /bin/zenpanda
 RUN chmod +x /bin/zenpanda
 
+ENV MALLOC_ARENA_MAX=4
+
 EXPOSE 9222/tcp
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/bin/zenpanda", "serve", "--host", "0.0.0.0", "--port", "9222", "--log-level", "info", "--cdp-max-connections", "100"]
+CMD ["/bin/zenpanda", "serve", "--host", "0.0.0.0", "--port", "9222", "--log-level", "info", "--cdp-max-connections", "512"]

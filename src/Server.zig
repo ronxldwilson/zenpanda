@@ -160,7 +160,7 @@ fn spawnWorker(self: *Server, socket: posix.socket_t) !void {
     }
     errdefer _ = self.active_threads.fetchSub(1, .monotonic);
 
-    const thread = try std.Thread.spawn(.{}, handleConnection, .{ self, socket });
+    const thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, handleConnection, .{ self, socket });
     thread.detach();
 }
 

@@ -158,6 +158,76 @@ pub fn deinit(self: *App) void {
     allocator.destroy(self);
 }
 
+const base = @import("testing.zig");
+
+test "App: initBrowserPool and deinitBrowserPool" {
+    try base.test_app.initBrowserPool(.{ .min_warm = 1, .max_total = 4 });
+    defer base.test_app.deinitBrowserPool();
+
+    try std.testing.expect(base.test_app.browser_pool != null);
+    const s = base.test_app.browser_pool.?.stats();
+    try std.testing.expectEqual(@as(usize, 1), s.total);
+    try std.testing.expectEqual(@as(usize, 1), s.idle);
+}
+
+test "App: initSharedCache and deinitSharedCache" {
+    base.test_app.initSharedCache(2048);
+    defer base.test_app.deinitSharedCache();
+
+    try std.testing.expect(base.test_app.shared_cache != null);
+    try base.test_app.shared_cache.?.put("k", "v", .javascript);
+    try std.testing.expectEqualStrings("v", base.test_app.shared_cache.?.get("k").?);
+}
+
+test "App: startHealthMonitor and stopHealthMonitor" {
+    try base.test_app.startHealthMonitor(100);
+    defer base.test_app.stopHealthMonitor();
+
+    try std.testing.expect(base.test_app.health_monitor != null);
+    try std.testing.expect(base.test_app.health_monitor.?.running.load(.acquire));
+}
+
+test "App: deinit idempotent for optional subsystems" {
+    base.test_app.deinitBrowserPool();
+    base.test_app.deinitSharedCache();
+    base.test_app.stopHealthMonitor();
+
+    try std.testing.expectEqual(null, base.test_app.browser_pool);
+    try std.testing.expectEqual(null, base.test_app.shared_cache);
+    try std.testing.expectEqual(null, base.test_app.health_monitor);
+}
+
+test "App: shutdown reads network state" {
+    const is_shutdown = base.test_app.shutdown();
+    try std.testing.expect(!is_shutdown);
+}
+
+test "App: getOrCreateSharedEnv returns consistent pointer" {
+    const env1 = try base.test_app.getOrCreateSharedEnv();
+    const env2 = try base.test_app.getOrCreateSharedEnv();
+    try std.testing.expectEqual(env1, env2);
+}
+
+test "App: full multi-tenancy lifecycle" {
+    base.test_app.initSharedCache(4096);
+    defer base.test_app.deinitSharedCache();
+
+    try base.test_app.initBrowserPool(.{ .min_warm = 1, .max_total = 4 });
+    defer base.test_app.deinitBrowserPool();
+
+    try base.test_app.startHealthMonitor(100);
+    defer base.test_app.stopHealthMonitor();
+
+    const browser = try base.test_app.browser_pool.?.acquire(null);
+    try base.test_app.shared_cache.?.put("resource", "cached-data", .css);
+
+    const status = base.test_app.health_monitor.?.getStatus();
+    try std.testing.expectEqual(@as(usize, 2), status.pool_total);
+    try std.testing.expectEqual(@as(u32, 1), status.cache_entries);
+
+    base.test_app.browser_pool.?.release(browser);
+}
+
 fn getAndMakeAppDir(allocator: Allocator) ?[]const u8 {
     if (@import("builtin").is_test) {
         return allocator.dupe(u8, "/tmp") catch unreachable;

@@ -164,3 +164,132 @@ fn destroyBrowserLocked(self: *BrowserPool, browser: *Browser) void {
     browser.deinit();
     self.allocator.destroy(browser);
 }
+
+const base = @import("testing.zig");
+
+test "BrowserPool: init and deinit" {
+    var pool = BrowserPool.init(base.test_app, .{ .min_warm = 0, .max_total = 4 });
+    defer pool.deinit();
+
+    const s = pool.stats();
+    try std.testing.expectEqual(@as(usize, 0), s.total);
+    try std.testing.expectEqual(@as(usize, 0), s.idle);
+}
+
+test "BrowserPool: acquire and release" {
+    var pool = BrowserPool.init(base.test_app, .{ .min_warm = 0, .max_total = 4 });
+    defer pool.deinit();
+
+    const browser = try pool.acquire(null);
+    try std.testing.expectEqual(@as(usize, 1), pool.stats().total);
+    try std.testing.expectEqual(@as(usize, 0), pool.stats().idle);
+
+    pool.release(browser);
+    try std.testing.expectEqual(@as(usize, 0), pool.stats().idle);
+    try std.testing.expectEqual(@as(usize, 0), pool.stats().total);
+}
+
+test "BrowserPool: pool exhaustion" {
+    var pool = BrowserPool.init(base.test_app, .{ .min_warm = 0, .max_total = 2 });
+    defer pool.deinit();
+
+    const b1 = try pool.acquire(null);
+    const b2 = try pool.acquire(null);
+
+    try std.testing.expectError(error.PoolExhausted, pool.acquire(null));
+
+    pool.release(b1);
+    pool.release(b2);
+}
+
+test "BrowserPool: warmUp pre-creates browsers" {
+    var pool = BrowserPool.init(base.test_app, .{ .min_warm = 2, .max_total = 4 });
+    defer pool.deinit();
+
+    try pool.warmUp();
+
+    const s = pool.stats();
+    try std.testing.expectEqual(@as(usize, 2), s.total);
+    try std.testing.expectEqual(@as(usize, 2), s.idle);
+}
+
+test "BrowserPool: acquire reuses idle browser" {
+    var pool = BrowserPool.init(base.test_app, .{ .min_warm = 1, .max_total = 4 });
+    defer pool.deinit();
+
+    const b1 = try pool.acquire(null);
+    pool.release(b1);
+
+    try std.testing.expectEqual(@as(usize, 1), pool.stats().idle);
+
+    const b2 = try pool.acquire(null);
+    try std.testing.expectEqual(@as(usize, 0), pool.stats().idle);
+    try std.testing.expectEqual(@as(usize, 1), pool.stats().total);
+
+    pool.release(b2);
+}
+
+test "BrowserPool: stats returns correct counts" {
+    var pool = BrowserPool.init(base.test_app, .{ .min_warm = 0, .max_total = 8 });
+    defer pool.deinit();
+
+    const b1 = try pool.acquire(null);
+    const b2 = try pool.acquire(null);
+    const b3 = try pool.acquire(null);
+
+    try std.testing.expectEqual(@as(usize, 3), pool.stats().total);
+    try std.testing.expectEqual(@as(usize, 0), pool.stats().idle);
+
+    pool.release(b1);
+    try std.testing.expectEqual(@as(usize, 2), pool.stats().total);
+
+    pool.release(b2);
+    pool.release(b3);
+}
+
+test "BrowserPool: evictIdle respects min_warm" {
+    var pool = BrowserPool.init(base.test_app, .{ .min_warm = 1, .max_total = 4 });
+    defer pool.deinit();
+
+    try pool.warmUp();
+    const b1 = try pool.acquire(null);
+    pool.release(b1);
+
+    pool.evictIdle();
+    try std.testing.expectEqual(@as(usize, 1), pool.stats().idle);
+
+    var pool2 = BrowserPool.init(base.test_app, .{ .min_warm = 0, .max_total = 4 });
+    defer pool2.deinit();
+    const b2 = try pool2.acquire(null);
+    pool2.release(b2);
+    pool2.evictIdle();
+    try std.testing.expectEqual(@as(usize, 0), pool2.stats().idle);
+}
+
+test "BrowserPool: checkMemoryPressure runs without crash" {
+    var pool = BrowserPool.init(base.test_app, .{
+        .min_warm = 0,
+        .max_total = 4,
+        .heap_limit_bytes = 1,
+    });
+    defer pool.deinit();
+
+    const b1 = try pool.acquire(null);
+    pool.release(b1);
+
+    pool.checkMemoryPressure();
+}
+
+test "BrowserPool: browser env.isolate API surface" {
+    var pool = BrowserPool.init(base.test_app, .{ .min_warm = 0, .max_total = 2 });
+    defer pool.deinit();
+
+    const browser = try pool.acquire(null);
+    defer pool.release(browser);
+
+    const heap = browser.env.isolate.getHeapStatistics();
+    try std.testing.expect(heap.used_heap_size > 0);
+
+    browser.env.isolate.lowMemoryNotification();
+    browser.env.isolate.memoryPressureNotification(.moderate);
+}

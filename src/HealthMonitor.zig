@@ -79,3 +79,68 @@ fn monitorLoop(self: *HealthMonitor, interval_ms: u64) void {
         std.Thread.sleep(interval_ms * std.time.ns_per_ms);
     }
 }
+
+const base = @import("testing.zig");
+
+test "HealthMonitor: init returns valid status" {
+    var monitor = HealthMonitor.init(base.test_app);
+
+    const status = monitor.getStatus();
+    try std.testing.expect(status.alive);
+    try std.testing.expectEqual(@as(usize, 0), status.pool_total);
+    try std.testing.expectEqual(@as(usize, 0), status.pool_idle);
+    try std.testing.expectEqual(@as(u32, 0), status.cache_entries);
+    try std.testing.expectEqual(@as(usize, 0), status.cache_bytes);
+}
+
+test "HealthMonitor: status reflects pool state" {
+    base.test_app.browser_pool = BrowserPool.init(base.test_app, .{ .min_warm = 0, .max_total = 4 });
+    defer {
+        base.test_app.browser_pool.?.deinit();
+        base.test_app.browser_pool = null;
+    }
+
+    var monitor = HealthMonitor.init(base.test_app);
+
+    const b = try base.test_app.browser_pool.?.acquire(null);
+
+    const status = monitor.getStatus();
+    try std.testing.expectEqual(@as(usize, 1), status.pool_total);
+    try std.testing.expectEqual(@as(usize, 0), status.pool_idle);
+
+    base.test_app.browser_pool.?.release(b);
+}
+
+test "HealthMonitor: status reflects cache state" {
+    const SharedCache = App.SharedCache;
+    base.test_app.shared_cache = SharedCache.init(base.test_app.allocator, 4096);
+    defer {
+        base.test_app.shared_cache.?.deinit();
+        base.test_app.shared_cache = null;
+    }
+
+    try base.test_app.shared_cache.?.put("test-key", "test-value", .css);
+
+    var monitor = HealthMonitor.init(base.test_app);
+    const status = monitor.getStatus();
+    try std.testing.expectEqual(@as(u32, 1), status.cache_entries);
+    try std.testing.expect(status.cache_bytes > 0);
+}
+
+test "HealthMonitor: start and stop" {
+    var monitor = HealthMonitor.init(base.test_app);
+    try monitor.start(100);
+    try std.testing.expect(monitor.running.load(.acquire));
+
+    monitor.stop();
+    try std.testing.expect(!monitor.running.load(.acquire));
+    try std.testing.expectEqual(null, monitor.thread);
+}
+
+test "HealthMonitor: double start is no-op" {
+    var monitor = HealthMonitor.init(base.test_app);
+    try monitor.start(100);
+    try monitor.start(100);
+    try std.testing.expect(monitor.running.load(.acquire));
+    monitor.stop();
+}

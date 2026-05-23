@@ -298,6 +298,92 @@ Pool management, shared caches, memory pressure eviction, and health monitoring.
 - `/json/health` HTTP endpoint for liveness checks
 - `SharedCache` with hit/miss stats and configurable memory cap
 
+## Syncing with Upstream Lightpanda
+
+ZenPanda is a fork of [lightpanda-io/browser](https://github.com/lightpanda-io/browser). Upstream ships bug fixes, new Web APIs, and performance improvements that we want. This section documents how to stay in sync safely.
+
+### Setup (one-time)
+
+Add the upstream remote if you haven't already:
+
+```bash
+git remote add upstream https://github.com/lightpanda-io/browser.git
+```
+
+### Sync procedure
+
+```bash
+# 1. Fetch upstream (no tags to keep refs clean)
+git fetch upstream --no-tags
+
+# 2. Check what's new
+git log --oneline $(git merge-base HEAD upstream/main)..upstream/main
+
+# 3. Preview file-level overlap
+git diff --name-only $(git merge-base HEAD upstream/main) upstream/main   # upstream changes
+git diff --name-only $(git merge-base HEAD upstream/main) HEAD            # our changes
+# Files in BOTH lists are conflict candidates
+
+# 4. Trial merge (dry run)
+git merge --no-commit --no-ff upstream/main
+git diff --cached --stat          # inspect what would change
+git merge --abort                 # back out
+
+# 5. Real merge (when satisfied)
+git merge upstream/main -m "Merge upstream lightpanda-io/browser"
+git push origin main
+```
+
+**Important: always use `git merge`, never `git rebase`** when syncing upstream. Rebase rewrites commit SHAs and breaks GitHub's ahead/behind tracking for forks.
+
+### What can break
+
+A clean merge (no git conflicts) does **not** mean our code still works. Upstream may change internal APIs that our multi-tenancy modules depend on. The critical dependency surface is:
+
+| Our Module | Upstream APIs We Depend On |
+|---|---|
+| **BrowserPool** | `Browser.init(app, opts, cdp)`, `Browser.deinit()`, `Browser.reset()`, `Browser.http_client.init/deinit()`, `Env.isolate.getHeapStatistics()`, `Env.isolate.lowMemoryNotification()`, `Env.isolate.memoryPressureNotification()` |
+| **SharedCache** | `lp.log` only (self-contained) |
+| **HealthMonitor** | `App.browser_pool`, `App.shared_cache`, `App.shutdown()`, `BrowserPool.stats()`, `BrowserPool.checkMemoryPressure()`, `SharedCache.stats()` |
+| **App (multi-tenancy)** | `js.Env.init(app, opts)`, `Network.init/deinit()`, `Network.shutdown.load(.acquire)`, `Platform.init/deinit()`, `Snapshot.load/deinit()` |
+| **CDP (our changes)** | `Browser.env.terminate()`, `Browser.env.inspector`, `Session.createPage/removePage/hasPage/currentFrame`, `Frame._frame_id`, `Frame.navigate()`, `Notification` event registration, `Network.registerCdp/unregisterCdp` |
+| **Browser (our changes)** | `js.Env.init()`, `App.getOrCreateSharedEnv()`, `HttpClient.init(allocator, network, cdp?)`, `Session.init()` |
+
+### Post-merge verification
+
+After every upstream merge, run the integration tests to verify our multi-tenancy layer still compiles and works:
+
+```bash
+# Run all tests (includes upstream + our integration tests)
+make test
+
+# Filter to just our multi-tenancy tests
+make test F="BrowserPool"
+make test F="SharedCache"
+make test F="HealthMonitor"
+make test F="App:"
+```
+
+**What the tests cover:**
+
+- **SharedCache** (`src/SharedCache.zig`) — put/get, hit/miss stats, eviction under max_bytes, oversized entry rejection, clear, duplicate key handling
+- **BrowserPool** (`src/BrowserPool.zig`) — init/deinit, acquire/release lifecycle, pool exhaustion (`error.PoolExhausted`), warmUp pre-creation, idle reuse, stats correctness, evictIdle respecting min_warm, checkMemoryPressure, V8 isolate API surface (`getHeapStatistics`, `lowMemoryNotification`, `memoryPressureNotification`)
+- **HealthMonitor** (`src/HealthMonitor.zig`) — status with no subsystems, status reflecting pool state, status reflecting cache state, start/stop thread lifecycle, double-start idempotency
+- **App orchestration** (`src/App.zig`) — initBrowserPool/deinitBrowserPool, initSharedCache/deinitSharedCache, startHealthMonitor/stopHealthMonitor, idempotent deinit of optional subsystems, shutdown network state, getOrCreateSharedEnv pointer stability, full multi-tenancy lifecycle (pool + cache + monitor together)
+
+If upstream renames a field, changes a function signature, or removes an API, these tests will fail at **compile time** — you'll know immediately what broke and where.
+
+### High-risk upstream changes to watch for
+
+When reviewing upstream commits, pay extra attention to changes in:
+
+- `src/browser/Browser.zig` — init/deinit/reset signatures
+- `src/browser/js/Env.zig` — V8 isolate lifecycle, InitOpts
+- `src/browser/HttpClient.zig` — init signature, disconnect handling
+- `src/cdp/CDP.zig` — session management, BrowserContext lifecycle
+- `src/network/Network.zig` — CDP link registration, shutdown flow
+- `src/browser/Session.zig` — page management APIs
+
 ## Build from sources
 
 ### Prerequisites

@@ -122,3 +122,83 @@ fn evictOneLocked(self: *SharedCache) void {
         self.allocator.free(key);
     }
 }
+
+const testing = std.testing;
+
+test "SharedCache: put and get" {
+    var cache = SharedCache.init(testing.allocator, 1024);
+    defer cache.deinit();
+
+    try cache.put("key1", "hello", .css);
+    const result = cache.get("key1");
+    try testing.expect(result != null);
+    try testing.expectEqualStrings("hello", result.?);
+}
+
+test "SharedCache: miss returns null" {
+    var cache = SharedCache.init(testing.allocator, 1024);
+    defer cache.deinit();
+
+    try testing.expectEqual(null, cache.get("nonexistent"));
+}
+
+test "SharedCache: stats track hits and misses" {
+    var cache = SharedCache.init(testing.allocator, 1024);
+    defer cache.deinit();
+
+    try cache.put("k", "v", .javascript);
+    _ = cache.get("k");
+    _ = cache.get("k");
+    _ = cache.get("missing");
+
+    const s = cache.stats();
+    try testing.expectEqual(@as(u32, 1), s.entries);
+    try testing.expectEqual(@as(u64, 2), s.hits);
+    try testing.expectEqual(@as(u64, 1), s.misses);
+    try testing.expectEqual(@as(usize, 1), s.total_bytes);
+}
+
+test "SharedCache: eviction under max_bytes" {
+    var cache = SharedCache.init(testing.allocator, 10);
+    defer cache.deinit();
+
+    try cache.put("a", "12345", .css);
+    try cache.put("b", "67890", .css);
+    try testing.expectEqual(@as(usize, 10), cache.total_bytes);
+
+    try cache.put("c", "xxxxx", .css);
+    const s = cache.stats();
+    try testing.expect(s.total_bytes <= 10);
+}
+
+test "SharedCache: oversized entry rejected" {
+    var cache = SharedCache.init(testing.allocator, 4);
+    defer cache.deinit();
+
+    try cache.put("big", "too_large", .other);
+    try testing.expectEqual(null, cache.get("big"));
+    try testing.expectEqual(@as(u32, 0), cache.stats().entries);
+}
+
+test "SharedCache: clear resets state" {
+    var cache = SharedCache.init(testing.allocator, 1024);
+    defer cache.deinit();
+
+    try cache.put("a", "data", .font);
+    cache.clear();
+
+    try testing.expectEqual(null, cache.get("a"));
+    try testing.expectEqual(@as(u32, 0), cache.stats().entries);
+    try testing.expectEqual(@as(usize, 0), cache.total_bytes);
+}
+
+test "SharedCache: duplicate key is no-op" {
+    var cache = SharedCache.init(testing.allocator, 1024);
+    defer cache.deinit();
+
+    try cache.put("k", "first", .css);
+    try cache.put("k", "second", .css);
+
+    try testing.expectEqualStrings("first", cache.get("k").?);
+    try testing.expectEqual(@as(u32, 1), cache.stats().entries);
+}

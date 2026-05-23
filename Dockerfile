@@ -1,10 +1,12 @@
-FROM debian:stable-slim
+FROM --platform=$BUILDPLATFORM debian:stable-slim AS builder
 
 ARG MINISIG=0.12
 ARG ZIG_MINISIG=RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U
 ARG V8=14.0.365.4
 ARG ZIG_V8=v0.4.5
+ARG BUILDPLATFORM
 ARG TARGETPLATFORM
+ARG TARGETARCH
 
 RUN apt-get update -yq && \
     apt-get install -yq --no-install-recommends xz-utils ca-certificates \
@@ -12,67 +14,82 @@ RUN apt-get update -yq && \
         clang make curl git && \
     rm -rf /var/lib/apt/lists/*
 
-# Get Rust
-# Download then execute (rather than `curl | sh`) so a failed download is not
-# masked by sh's exit code under /bin/sh, which has no pipefail.
+# Get Rust with cross-compilation target
 RUN curl --fail -sSL --retry 3 --retry-delay 2 -o /tmp/rustup.sh https://sh.rustup.rs && \
     sh /tmp/rustup.sh --profile minimal -y && \
     rm /tmp/rustup.sh
 ENV PATH="/root/.cargo/bin:${PATH}"
+RUN case $TARGETARCH in \
+      "arm64") rustup target add aarch64-unknown-linux-gnu ;; \
+      *) rustup target add x86_64-unknown-linux-gnu ;; \
+    esac
 
-# install minisig
-RUN curl --fail -L --retry 3 --retry-delay 2 -O https://github.com/jedisct1/minisign/releases/download/${MINISIG}/minisign-${MINISIG}-linux.tar.gz && \
+# install minisig (use build platform arch since we run it during build)
+RUN case $BUILDPLATFORM in \
+      "linux/arm64") BUILD_ARCH="aarch64" ;; \
+      *) BUILD_ARCH="x86_64" ;; \
+    esac && \
+    curl --fail -L --retry 3 --retry-delay 2 -O https://github.com/jedisct1/minisign/releases/download/${MINISIG}/minisign-${MINISIG}-linux.tar.gz && \
     tar xzf minisign-${MINISIG}-linux.tar.gz -C /
 
 # clone lightpanda
 RUN git clone --depth 1 https://github.com/lightpanda-io/browser.git
 WORKDIR /browser
 
-# install zig
+# install zig (use build platform arch since the compiler runs on the build machine)
 RUN ZIG=$(grep '\.minimum_zig_version = "' "build.zig.zon" | cut -d'"' -f2) && \
-    case $TARGETPLATFORM in \
-      "linux/arm64") ARCH="aarch64" ;; \
-      *) ARCH="x86_64" ;; \
+    case $BUILDPLATFORM in \
+      "linux/arm64") BUILD_ARCH="aarch64" ;; \
+      *) BUILD_ARCH="x86_64" ;; \
     esac && \
-    curl --fail -L --retry 3 --retry-delay 2 -O https://ziglang.org/download/${ZIG}/zig-${ARCH}-linux-${ZIG}.tar.xz && \
-    curl --fail -L --retry 3 --retry-delay 2 -O https://ziglang.org/download/${ZIG}/zig-${ARCH}-linux-${ZIG}.tar.xz.minisig && \
-    /minisign-linux/${ARCH}/minisign -Vm zig-${ARCH}-linux-${ZIG}.tar.xz -P ${ZIG_MINISIG} && \
-    tar xf zig-${ARCH}-linux-${ZIG}.tar.xz && \
-    mv zig-${ARCH}-linux-${ZIG} /usr/local/lib && \
-    ln -s /usr/local/lib/zig-${ARCH}-linux-${ZIG}/zig /usr/local/bin/zig
+    curl --fail -L --retry 3 --retry-delay 2 -O https://ziglang.org/download/${ZIG}/zig-${BUILD_ARCH}-linux-${ZIG}.tar.xz && \
+    curl --fail -L --retry 3 --retry-delay 2 -O https://ziglang.org/download/${ZIG}/zig-${BUILD_ARCH}-linux-${ZIG}.tar.xz.minisig && \
+    /minisign-linux/${BUILD_ARCH}/minisign -Vm zig-${BUILD_ARCH}-linux-${ZIG}.tar.xz -P ${ZIG_MINISIG} && \
+    tar xf zig-${BUILD_ARCH}-linux-${ZIG}.tar.xz && \
+    mv zig-${BUILD_ARCH}-linux-${ZIG} /usr/local/lib && \
+    ln -s /usr/local/lib/zig-${BUILD_ARCH}-linux-${ZIG}/zig /usr/local/bin/zig
 
-# download and install v8
-RUN case $TARGETPLATFORM in \
-    "linux/arm64") ARCH="aarch64" ;; \
-    *) ARCH="x86_64" ;; \
+# download v8 (use target platform arch since this is linked into the output binary)
+RUN case $TARGETARCH in \
+    "arm64") TARGET_ARCH="aarch64" ;; \
+    *) TARGET_ARCH="x86_64" ;; \
     esac && \
-    curl --fail -L --retry 3 --retry-delay 2 -o libc_v8.a https://github.com/lightpanda-io/zig-v8-fork/releases/download/${ZIG_V8}/libc_v8_${V8}_linux_${ARCH}.a && \
+    curl --fail -L --retry 3 --retry-delay 2 -o libc_v8.a https://github.com/lightpanda-io/zig-v8-fork/releases/download/${ZIG_V8}/libc_v8_${V8}_linux_${TARGET_ARCH}.a && \
     mkdir -p v8/ && \
     mv libc_v8.a v8/libc_v8.a
 
+# resolve zig target triple from TARGETARCH
+RUN case $TARGETARCH in \
+      "arm64") echo "aarch64-linux-gnu" > /tmp/zig_target ;; \
+      *) echo "x86_64-linux-gnu" > /tmp/zig_target ;; \
+    esac
+
 # build v8 snapshot
-RUN zig build -Doptimize=ReleaseFast \
+RUN ZIG_TARGET=$(cat /tmp/zig_target) && \
+    zig build -Doptimize=ReleaseFast \
+    -Dtarget=${ZIG_TARGET} \
     -Dprebuilt_v8_path=v8/libc_v8.a \
     snapshot_creator -- src/snapshot.bin
 
 # build release
-RUN zig build -Doptimize=ReleaseFast \
+RUN ZIG_TARGET=$(cat /tmp/zig_target) && \
+    zig build -Doptimize=ReleaseFast \
+    -Dtarget=${ZIG_TARGET} \
     -Dsnapshot_path=../../snapshot.bin \
     -Dprebuilt_v8_path=v8/libc_v8.a
 
-FROM debian:stable-slim
+FROM --platform=$TARGETPLATFORM debian:stable-slim AS tini
 
 RUN apt-get update -yq && \
     apt-get install -yq --no-install-recommends tini && \
     rm -rf /var/lib/apt/lists/*
 
-FROM debian:stable-slim
+FROM --platform=$TARGETPLATFORM debian:stable-slim
 
-# copy ca certificates
-COPY --from=0 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
-COPY --from=0 /browser/zig-out/bin/zenpanda /bin/zenpanda
-COPY --from=1 /usr/bin/tini /usr/bin/tini
+COPY --from=builder /browser/zig-out/bin/zenpanda /bin/zenpanda
+COPY --from=tini /usr/bin/tini /usr/bin/tini
 
 EXPOSE 9222/tcp
 

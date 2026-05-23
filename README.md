@@ -116,11 +116,39 @@ Your automation client (Puppeteer, Playwright, etc.) can run either inside WSL o
 
 **Install from Docker**
 
-ZenPanda provides [Docker images on Docker Hub](https://hub.docker.com/r/ronxldwilson/zenpanda) for Linux arm64.
+ZenPanda provides [multi-arch Docker images on Docker Hub](https://hub.docker.com/r/ronxldwilson/zenpanda) for Linux arm64 and amd64.
 The following command fetches the Docker image and starts a new container exposing ZenPanda's CDP server on port `9222`.
 ```console
 docker run -d --name zenpanda -p 127.0.0.1:9222:9222 ronxldwilson/zenpanda:latest
 ```
+
+**Building Multi-Arch Docker Images**
+
+The recommended way to build Docker images is to cross-compile natively on macOS using `build-linux.sh`, then package the binary with `Dockerfile.package`. This avoids Docker's memory constraints during the heavy Zig/LLVM compilation.
+
+```bash
+# 1. Build the amd64 binary (cross-compiles from macOS)
+./build-linux.sh x86_64
+
+# 2. Package and push the amd64 image
+docker buildx build -f Dockerfile.package --platform linux/amd64 \
+  -t ronxldwilson/zenpanda:amd64 --push .
+
+# 3. Build the arm64 binary
+./build-linux.sh aarch64
+
+# 4. Package and push the arm64 image
+docker buildx build -f Dockerfile.package --platform linux/arm64 \
+  -t ronxldwilson/zenpanda:arm64 --push .
+
+# 5. Create the combined multi-arch manifest
+docker buildx imagetools create -t ronxldwilson/zenpanda:latest \
+  ronxldwilson/zenpanda:arm64 ronxldwilson/zenpanda:amd64
+```
+
+`build-linux.sh` handles everything: installs Zig locally, downloads the correct V8 prebuilt, cross-compiles html5ever via `cargo-zigbuild`, and produces a Linux binary in `dist/`. Artifacts are cached between runs.
+
+> **Note:** Building entirely inside Docker (`Dockerfile`) is also supported but requires Docker Desktop to have at least 8 GB of RAM allocated (Settings > Resources > Memory). The native build approach above has no such constraint.
 
 ### Dump a URL
 

@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2025  Lightpanda (Selecy SAS)
+// Copyright (C) 2023-2026  Lightpanda (Selecy SAS)
 //
 // Francis Bouvier <francis@lightpanda.io>
 // Pierre Tachoire <pierre@lightpanda.io>
@@ -27,6 +27,8 @@ const Blob = @import("Blob.zig");
 const File = @This();
 
 _proto: *Blob,
+_name: []const u8,
+_last_modified: i64,
 
 pub const InitOptions = struct {
     type: []const u8 = "",
@@ -36,25 +38,40 @@ pub const InitOptions = struct {
 
 pub fn init(
     parts_: ?[]const js.Value,
-    name: []const u8,
+    name_: []const u8,
     opts_: ?InitOptions,
     page: *Page,
 ) !*File {
+    const session = page.session;
+    const arena = try session.getArena(.large, "File");
+    errdefer session.releaseArena(arena);
+
     const opts = opts_ orelse InitOptions{};
-    const blob = try Blob.init(parts_, .{
-        .type = opts.type,
-        .endings = opts.endings,
-    }, page);
+    const mime = try Blob.validateMimeType(arena, opts.type, false);
 
-    errdefer blob.deinit(page);
+    const data = blk: {
+        if (parts_) |blob_parts| {
+            const use_native_endings = std.mem.eql(u8, opts.endings, "native");
+            var w: std.Io.Writer.Allocating = .init(arena);
+            for (blob_parts) |js_val| {
+                const part = try js_val.toStringSmart();
+                try Blob.writePartWithEndings(part, use_native_endings, &w.writer);
+            }
+            break :blk w.written();
+        }
 
-    const file = try blob._arena.create(File);
-    file.* = .{
-        ._proto = blob,
-        ._name = try blob._arena.dupe(u8, name),
-        ._last_modified = opts.lastModified orelse std.time.milliTimestamp(),
+        break :blk "";
     };
-    blob._type = .{ .file = file };
+
+    const last_modified = opts.lastModified orelse std.time.milliTimestamp();
+
+    const file = try page.factory.blob(arena, File{
+        ._proto = undefined,
+        ._name = try arena.dupe(u8, name_),
+        ._last_modified = last_modified,
+    });
+    file._proto._slice = data;
+    file._proto._mime = mime;
 
     return file;
 }
@@ -77,6 +94,8 @@ pub const JsApi = struct {
     };
 
     pub const constructor = bridge.constructor(File.init, .{});
+    pub const name = bridge.accessor(File.getName, null, .{});
+    pub const lastModified = bridge.accessor(File.getLastModified, null, .{});
 };
 
 const testing = @import("../../testing.zig");

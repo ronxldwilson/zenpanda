@@ -18,18 +18,17 @@
 
 const std = @import("std");
 
-const Allocator = std.mem.Allocator;
+const App = @import("../App.zig");
+const CDP = @import("../cdp/CDP.zig");
+const Notification = @import("../Notification.zig");
 
 const js = @import("js/js.zig");
-const App = @import("../App.zig");
+const Page = @import("Page.zig");
+const Session = @import("Session.zig");
 const HttpClient = @import("HttpClient.zig");
-const CDP = @import("../cdp/CDP.zig");
 
 const ArenaPool = App.ArenaPool;
-
-const Session = @import("Session.zig");
-const Page = @import("Page.zig");
-const Notification = @import("../Notification.zig");
+const Allocator = std.mem.Allocator;
 
 // Browser is an instance of the browser.
 // You can create multiple browser instances.
@@ -47,6 +46,14 @@ owns_env: bool,
 page_pool: std.heap.MemoryPool(Page),
 session_pool: std.heap.MemoryPool(Session),
 active_sessions: std.ArrayList(*Session),
+
+// Pool for FinalizerCallback.Identity structs — the records V8 weak-callback
+// parameters point at. Scoped to the Browser (i.e. the V8 Isolate's lifetime)
+// rather than the Session: V8 can run a weak finalizer arbitrarily late, any
+// time up until the Isolate is torn down, so these must outlive every Session.
+// Freed in deinit *after* env.deinit() tears down the Isolate — the point past
+// which no finalizer can fire.
+fc_identity_pool: std.heap.MemoryPool(js.FinalizerCallback.Identity),
 
 // Monotonic frame-ID generator scoped to this Browser (one per CDP
 // connection). Lives here, not on Session, because CDP target IDs
@@ -98,6 +105,7 @@ pub fn init(self: *Browser, app: *App, opts: InitOpts, cdp: ?*CDP) !void {
         .page_pool = std.heap.MemoryPool(Page).init(allocator),
         .session_pool = std.heap.MemoryPool(Session).init(allocator),
         .active_sessions = .empty,
+        .fc_identity_pool = .init(allocator),
     };
     try self.http_client.init(allocator, &app.network, cdp);
 }
@@ -112,6 +120,7 @@ pub fn deinit(self: *Browser) void {
         self.env.deinit();
         self.allocator.destroy(self.env);
     }
+    self.fc_identity_pool.deinit();
     self.page_pool.deinit();
     self.session_pool.deinit();
     self.http_client.deinit();

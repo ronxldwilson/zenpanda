@@ -97,6 +97,7 @@ queue: std.DoublyLinkedList = .{},
 
 // A queue for things that MUST happen on the next tick.
 next_tick_queue: std.DoublyLinkedList = .{},
+next_tick_count: usize = 0,
 
 // Queue is for Transfers that have no connection. ready_queue is for connections
 // that were initiated when performing == true and thus need to wait until

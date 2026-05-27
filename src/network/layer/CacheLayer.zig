@@ -72,6 +72,9 @@ fn request(ptr: *anyopaque, transfer: *Transfer) anyerror!void {
             &.{ .transfer = transfer },
         );
 
+        // Serve cache hits synchronously — deferring via runNextTick adds
+        // up to 200ms poll-block latency per cached resource, which compounds
+        // catastrophically under high concurrency (500+ sessions).
         try serveFromCache(req, &cached);
         transfer.deinit();
         return;

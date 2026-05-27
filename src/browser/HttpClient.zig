@@ -426,9 +426,14 @@ pub fn tick(self: *Client, timeout_ms: u32, mode: DrainMode) !void {
         return error.ClientDisconnected;
     }
 
+    const had_next_tick = self.next_tick_count > 0;
     try self.drainNextTickQueue();
     try self.drainQueue();
-    try self.perform(@intCast(timeout_ms));
+    // If NextTick items were just drained, their callbacks may have queued
+    // new transfers or JS work. Avoid blocking in poll — use timeout 0 so
+    // we return to the runner loop immediately for re-evaluation.
+    const effective_timeout: u32 = if (had_next_tick) 0 else timeout_ms;
+    try self.perform(@intCast(effective_timeout));
     // perform/processMessages just released a batch of connections back to
     // the pool. Drain again so queued transfers can use them this tick
     // instead of waiting for the next runner iteration.

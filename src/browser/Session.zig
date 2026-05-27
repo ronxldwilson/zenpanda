@@ -131,6 +131,12 @@ pub fn deinit(self: *Session) void {
 
     self.cookie_jar.deinit();
 
+    // Nudge V8 to reclaim wrappers and external allocations tied to the
+    // session we just tore down. Without this, the isolate accumulates
+    // garbage across sessions under high concurrency, bloating heap and
+    // increasing GC pause variance.
+    self.browser.env.memoryPressureNotification(.moderate);
+
     self.storage_shed.deinit(self.browser.app.allocator);
     self.arena_pool.release(self.arena);
 }

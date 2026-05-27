@@ -21,7 +21,6 @@ const lp = @import("lightpanda");
 
 const Layer = @import("../../browser/HttpClient.zig").Layer;
 const Client = @import("../../browser/HttpClient.zig").Client;
-const NextTickNode = @import("../../browser/HttpClient.zig").NextTickNode;
 const Request = @import("../../browser/HttpClient.zig").Request;
 const Transfer = @import("../../browser/HttpClient.zig").Transfer;
 const Response = @import("../../browser/HttpClient.zig").Response;
@@ -73,30 +72,8 @@ fn request(ptr: *anyopaque, transfer: *Transfer) anyerror!void {
             &.{ .transfer = transfer },
         );
 
-        const ctx = try arena.create(CachedResponse);
-        ctx.* = cached;
-
-        try transfer.client.runNextTick(transfer, ctx, .{
-            .run = struct {
-                fn run(t: *Transfer, ctx_ptr: *anyopaque) void {
-                    defer t.deinit();
-
-                    const c: *CachedResponse = @ptrCast(@alignCast(ctx_ptr));
-                    serveFromCache(&t.req, c) catch |err| {
-                        t.req.error_callback(t.req.ctx, err);
-                    };
-                }
-            }.run,
-            .abort = struct {
-                fn abort(ctx_ptr: *anyopaque) void {
-                    const c: *CachedResponse = @ptrCast(@alignCast(ctx_ptr));
-                    switch (c.data) {
-                        .buffer => |_| {},
-                        .file => |f| f.file.close(),
-                    }
-                }
-            }.abort,
-        });
+        try serveFromCache(req, &cached);
+        transfer.deinit();
         return;
     }
 

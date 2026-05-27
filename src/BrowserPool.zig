@@ -112,7 +112,7 @@ pub fn checkMemoryPressure(self: *BrowserPool) void {
             .idle = self.idle.items.len,
         });
         while (self.idle.items.len > self.config.min_warm) {
-            const browser = self.idle.pop();
+            const browser = self.idle.pop().?;
             self.destroyBrowserLocked(browser);
         }
         for (self.all.items) |browser| {
@@ -126,7 +126,7 @@ pub fn evictIdle(self: *BrowserPool) void {
     defer self.mutex.unlock();
 
     while (self.idle.items.len > self.config.min_warm) {
-        const browser = self.idle.pop();
+        const browser = self.idle.pop().?;
         self.destroyBrowserLocked(browser);
     }
 }

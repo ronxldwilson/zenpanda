@@ -50,7 +50,7 @@ done
 
 case "$MODE" in
     full)   CLIENT_LEVELS=(1 5 10 20 50 200 500) ;;
-    quick)  CLIENT_LEVELS=(1 10 50) ;;
+    quick)  CLIENT_LEVELS=(1 10 50 500) ;;
     single) CLIENT_LEVELS=("$SINGLE_CLIENTS") ;;
 esac
 

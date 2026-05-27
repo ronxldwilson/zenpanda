@@ -429,6 +429,9 @@ pub fn maxConnections(self: *const Config) u16 {
     };
 }
 
+// TCP listen() backlog. Must be >= max_connections: under burst load
+// (e.g. 500 simultaneous WS dials) a smaller backlog causes the kernel
+// to RST connections before the accept loop can drain them.
 pub fn maxPendingConnections(self: *const Config) u31 {
     return switch (self.mode) {
         .serve => |opts| @max(opts.cdp_max_pending_connections, opts.cdp_max_connections),

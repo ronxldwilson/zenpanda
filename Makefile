@@ -72,7 +72,7 @@ help:
 
 # $(ZIG) commands
 # ------------
-.PHONY: build build-v8-snapshot build-dev download-v8 run run-release test bench data end2end clean
+.PHONY: build build-v8-snapshot build-dev download-v8 run run-release test bench bench-quick data end2end clean
 
 ## Download the prebuilt V8 archive (skips the 10+ min source build)
 download-v8:
@@ -122,6 +122,14 @@ test:
 	@script -qec 'TEST_FILTER="${F}" $(ZIG) build $(ZIGFLAGS) test -freference-trace' /dev/null 2>&1 \
 		| grep --line-buffered -v "^/.*zig test -freference-trace"
 endif
+
+## Run multi-client benchmark (full sweep 1-500 clients)
+bench:
+	@bash bench/upstream_bench.sh
+
+## Run quick benchmark (1, 10, 50 clients only)
+bench-quick:
+	@bash bench/upstream_bench.sh --quick
 
 ## Run demo/runner end to end tests
 end2end:

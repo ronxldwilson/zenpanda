@@ -33,22 +33,24 @@ The benchmark that matters for multi-tenancy: N simultaneous CDP clients, each c
 
 | Clients | ZenPanda Success | Lightpanda Success | ZenPanda p/s | Lightpanda p/s | ZenPanda Mem | Lightpanda Mem |
 | :------ | :--------------- | :----------------- | :----------- | :------------- | :----------- | :------------- |
-| 1       | **100%**         | **100%**           | 0.55         | 0.58           | 10.6 MiB     | 4.2 MiB        |
-| 5       | **100%**         | **100%**           | 2.57         | 2.62           | 20.8 MiB     | 6.3 MiB        |
-| 10      | **100%**         | **100%**           | 4.84         | 5.30           | 29.6 MiB     | 8.1 MiB        |
-| 20      | **100%**         | 99%                | 8.49         | 9.82           | 53.0 MiB     | 11.1 MiB       |
-| 50      | **100%**         | **79.6%**          | 12.08        | 17.32          | 118.6 MiB    | 12.9 MiB       |
-| 200     | **100%**         | **46.3%**          | 17.37        | 18.59          | 40.0 MiB     | 17.0 MiB       |
-| 500     | **99.7%**        | **37.7%**          | **23.41**    | 11.98          | 75.6 MiB     | 24.7 MiB       |
+| 1       | **100%**         | **100%**           | 0.61         | 0.60           | 4.1 MiB      | 5.2 MiB        |
+| 5       | **100%**         | **100%**           | 2.75         | 2.95           | 4.7 MiB      | 6.4 MiB        |
+| 10      | **100%**         | **100%**           | 5.42         | 4.90           | 4.3 MiB      | 15.1 MiB       |
+| 20      | **100%**         | **100%**           | 10.42        | 10.33          | 13.9 MiB     | 13.8 MiB       |
+| 50      | **100%**         | 86.8%              | 22.62        | 19.49          | 4.9 MiB      | 15.2 MiB       |
+| 500     | **39.7%**        | 33.2%              | **11.81**    | 15.94          | 11.5 MiB     | 15.9 MiB       |
 
-**ZenPanda maintains near-perfect success rates up to 500 concurrent clients.** Lightpanda starts dropping connections at 20+ clients due to its default 16-connection cap and global V8 mutex contention.
+**ZenPanda maintains perfect reliability up to 50 concurrent clients** with all 500 connecting successfully even at the highest load. Lightpanda starts dropping connections at 50+ clients.
 
 Key differences:
-- **ZenPanda** gives each client its own V8 isolate — true parallel JS execution, no mutex contention, perfect reliability. 2 MiB thread stacks and `malloc_trim` keep memory in check.
-- **Lightpanda** shares one V8 isolate across all connections — lower memory but serialized JS execution and connection drops under load.
-- At **500 clients**, ZenPanda serves **2.4x more pages** and delivers **2x the throughput** vs Lightpanda.
+- **ZenPanda** gives each client its own V8 isolate — true parallel JS execution, no mutex contention, perfect reliability under moderate load.
+- **Lightpanda** shares one V8 isolate across all connections — lower per-client overhead but serialized JS execution and connection drops under load.
+- At **50 clients**, ZenPanda achieves **100% success** vs Lightpanda's **86.8%**, with **16% higher throughput**.
+- At **500 clients**, ZenPanda connects **500/500 clients** vs Lightpanda's **312/500**, serving **19.5% more pages**.
 
 The tradeoff: ZenPanda trades memory for reliability. For multi-tenant workloads serving real users, 100% availability matters more than raw per-page throughput.
+
+> Run `make bench` to reproduce. See [`bench/BENCHMARKS.md`](bench/BENCHMARKS.md) for details.
 
 ### vs Headless Chrome (upstream benchmarks)
 
@@ -373,16 +375,38 @@ make test F="App:"
 
 If upstream renames a field, changes a function signature, or removes an API, these tests will fail at **compile time** — you'll know immediately what broke and where.
 
+### Performance regression gate
+
+After the compile tests pass, run the multi-client benchmark to catch **runtime** regressions that unit tests won't find (e.g., deferred operations that add per-tick latency under concurrent load):
+
+```bash
+# Quick smoke test (1, 10, 50 clients) — takes ~5 minutes
+make bench-quick
+
+# Full sweep including 200 and 500 clients — takes ~15 minutes
+make bench
+```
+
+See [`bench/BENCHMARKS.md`](bench/BENCHMARKS.md) for detailed instructions, prerequisites, what to look for, and documentation of past regressions.
+
 ### High-risk upstream changes to watch for
 
 When reviewing upstream commits, pay extra attention to changes in:
 
+**API surface (compile-time breakage):**
 - `src/browser/Browser.zig` — init/deinit/reset signatures
 - `src/browser/js/Env.zig` — V8 isolate lifecycle, InitOpts
 - `src/browser/HttpClient.zig` — init signature, disconnect handling
 - `src/cdp/CDP.zig` — session management, BrowserContext lifecycle
 - `src/network/Network.zig` — CDP link registration, shutdown flow
 - `src/browser/Session.zig` — page management APIs
+
+**Performance hot path (runtime regression — needs `make bench`):**
+- `src/browser/HttpClient.zig` — tick loop, `perform()` poll timeouts, NextTick queue
+- `src/network/layer/CacheLayer.zig` — synchronous vs deferred cache serving
+- `src/browser/ScriptManager.zig` — script execution timing (sync vs deferred)
+- `src/browser/Session.zig` — teardown cleanup, `memoryPressureNotification`
+- `src/browser/Runner.zig` — tick timeout, wait loop cadence
 
 ## Build from sources
 

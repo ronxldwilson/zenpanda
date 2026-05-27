@@ -91,6 +91,14 @@ if [[ ! -f "$SCRIPT_DIR/multitest" ]] || \
 fi
 
 # ── Start local HTTP server ──────────────────────────────────────────
+# Kill any leftover server on the port from a previous run
+EXISTING_PID=$(lsof -ti :"$HTTP_PORT" 2>/dev/null || true)
+if [[ -n "$EXISTING_PID" ]]; then
+    warn "Killing leftover process on port $HTTP_PORT (PID $EXISTING_PID)"
+    kill -9 $EXISTING_PID 2>/dev/null || true
+    sleep 1
+fi
+
 info "Starting local HTTP server on port $HTTP_PORT..."
 python3 -m http.server "$HTTP_PORT" --directory "$DEMO_DIR" &>/dev/null &
 CLEANUP_PIDS+=($!)
@@ -116,8 +124,19 @@ rm -f "$TUNNEL_LOG"
 [[ -n "$TUNNEL_URL" ]] || die "Cloudflare tunnel failed to start after 30s"
 info "Tunnel URL: $TUNNEL_URL"
 
-curl -sf "$TUNNEL_URL/index.html" >/dev/null \
-    || die "Tunnel is not serving the amiibo site"
+# The tunnel URL appears in logs before DNS propagates for the random subdomain.
+# Wait for DNS + tunnel to become fully routable.
+info "Waiting for tunnel DNS propagation..."
+sleep 10
+TUNNEL_OK=false
+for i in $(seq 1 20); do
+    if curl -sf --max-time 8 "$TUNNEL_URL/index.html" >/dev/null 2>&1; then
+        TUNNEL_OK=true
+        break
+    fi
+    sleep 5
+done
+$TUNNEL_OK || die "Tunnel is not serving the amiibo site after 2 minutes"
 
 # ── Run benchmark sweep ──────────────────────────────────────────────
 > "$RESULTS_FILE"

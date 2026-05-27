@@ -431,7 +431,7 @@ pub fn maxConnections(self: *const Config) u16 {
 
 pub fn maxPendingConnections(self: *const Config) u31 {
     return switch (self.mode) {
-        .serve => |opts| opts.cdp_max_pending_connections,
+        .serve => |opts| @max(opts.cdp_max_pending_connections, opts.cdp_max_connections),
         .mcp => 128,
         else => unreachable,
     };

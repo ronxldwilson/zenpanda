@@ -38,7 +38,7 @@ The benchmark that matters for multi-tenancy: N simultaneous CDP clients, each c
 | 10      | **100%**         | **100%**           | 5.42         | 4.90           | 4.3 MiB      | 15.1 MiB       |
 | 20      | **100%**         | **100%**           | 10.42        | 10.33          | 13.9 MiB     | 13.8 MiB       |
 | 50      | **100%**         | 86.8%              | 22.62        | 19.49          | 4.9 MiB      | 15.2 MiB       |
-| 500     | **39.7%**        | 33.2%              | **11.81**    | 15.94          | 11.5 MiB     | 15.9 MiB       |
+| 500     | **77.6%**        | 39.2%              | **16.67**    | 15.70          | 11.5 MiB     | 22.2 MiB       |
 
 **ZenPanda maintains perfect reliability up to 50 concurrent clients** with all 500 connecting successfully even at the highest load. Lightpanda starts dropping connections at 50+ clients.
 
@@ -46,7 +46,7 @@ Key differences:
 - **ZenPanda** gives each client its own V8 isolate — true parallel JS execution, no mutex contention, perfect reliability under moderate load.
 - **Lightpanda** shares one V8 isolate across all connections — lower per-client overhead but serialized JS execution and connection drops under load.
 - At **50 clients**, ZenPanda achieves **100% success** vs Lightpanda's **86.8%**, with **16% higher throughput**.
-- At **500 clients**, ZenPanda connects **500/500 clients** vs Lightpanda's **312/500**, serving **19.5% more pages**.
+- At **500 clients**, ZenPanda connects **500/500 clients** vs Lightpanda's **345/500**, with **77.6% success** vs **39.2%** and higher throughput.
 
 The tradeoff: ZenPanda trades memory for reliability. For multi-tenant workloads serving real users, 100% availability matters more than raw per-page throughput.
 

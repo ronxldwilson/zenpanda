@@ -793,6 +793,10 @@ pub fn run(self: *Network) void {
 
         self.fireTicks();
 
+        // Accept again after the heavy per-session work above so we don't
+        // stall the backlog while processing completions/CDP/ticks.
+        self.acceptConnections();
+
         if (self.shutdown.load(.acquire)) {
             // Drain any live CDP links so their workers can exit (issue #2510).
             // Idempotent — no-op once drained, safe to call every iteration
